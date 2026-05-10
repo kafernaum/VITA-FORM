@@ -75,14 +75,14 @@ export default function Auteur() {
                 <div className="text-xs text-slate-400 mt-2">Voir sur Amazon ↗</div>
               </a>
               <a
-                href="https://www.amazon.fr/s?k=Ahmed+ELY+Mustapha+manuel+pouvoir"
+                href="https://amzn.eu/d/0baJGBbi"
                 target="_blank" rel="noreferrer"
-                data-testid="bibli-pouvoir"
+                data-testid="bibli-voleurs-ames"
                 className="vf-card p-6 group"
               >
                 <BookOpen className="w-6 h-6 text-[#D4AF37]" />
                 <div className="vf-serif text-lg mt-3 text-slate-50 leading-snug">
-                  Manuel à l'usage de ceux qui veulent prendre le pouvoir… et y rester.
+                  Voleurs d'âmes :<br/>Finances publiques criminelles.
                 </div>
                 <div className="text-xs text-slate-400 mt-2">Voir sur Amazon ↗</div>
               </a>
