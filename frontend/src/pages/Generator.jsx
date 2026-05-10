@@ -99,20 +99,61 @@ export default function Generator() {
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    // Snapshot de la liste de générations existantes — permet de détecter
+    // un livrable créé côté backend même si la connexion HTTP est coupée
+    // par le proxy avant que la réponse n'arrive (Claude prend 60-120s).
+    let existingIds = [];
+    try {
+      const { data: existing } = await api.get("/generations");
+      existingIds = existing.map((g) => g.id);
+    } catch { /* non bloquant */ }
+
     try {
       const { data } = await api.post("/generations", {
         topic, institution_id: institutionId, cycle, duration, year, sources,
         source_ids: selectedSourceIds.length ? selectedSourceIds : null,
         jurisprudence_ids: selectedJurisIds.length ? selectedJurisIds : null,
         language,
-      });
+      }, { timeout: 180000 });
       toast.success(t("generator.successToast"));
       nav(`/preview/${data.id}`);
     } catch (err) {
       const status = err?.response?.status;
-      const msg = err?.response?.data?.detail || t("auth.errorGeneric");
-      if (status === 402) toast.error(msg, { duration: 8000 });
-      else toast.error(msg);
+      const detail = err?.response?.data?.detail;
+      // Considère comme "connexion interrompue" :
+      // - pas de response (axios cancel/timeout/CORS)
+      // - response 502/503/504 (proxy K8s coupe à 60s ou amont mort)
+      // - response sans detail JSON exploitable
+      const isInterrupted = !err?.response
+        || [502, 503, 504].includes(status)
+        || typeof detail !== "string";
+
+      if (isInterrupted) {
+        // Le proxy K8s a coupé la connexion HTTP (>60s). Le backend a peut-être
+        // quand même terminé la génération — on tente de la récupérer.
+        try {
+          await new Promise((r) => setTimeout(r, 3000));
+          const { data: latest } = await api.get("/generations");
+          const fresh = latest.find((g) => !existingIds.includes(g.id));
+          if (fresh) {
+            toast.success(isAr ? "تم استرجاع المادة." : "Livrable récupéré.");
+            nav(`/preview/${fresh.id}`);
+            return;
+          }
+        } catch { /* on retombe sur l'erreur réseau */ }
+        toast.error(
+          isAr
+            ? "انقطع الاتصال (الخادم بطيء جدا أو خدمة Claude مزدحمة). جرب مجددا خلال دقيقة. إذا تكرّر، تأكد من رصيد Universal Key."
+            : "Connexion interrompue ou service IA saturé (>60s). Réessayez dans 1 minute. Si cela persiste, vérifiez le solde Universal Key (Profile → Add Balance) — Claude consomme parfois un crédit même en cas d'erreur 502.",
+          { duration: 15000 },
+        );
+        return;
+      }
+
+      const msg = detail || t("auth.errorGeneric");
+      if (status === 402) toast.error(msg, { duration: 12000 });
+      else if (status === 502) toast.error(msg, { duration: 12000 });
+      else toast.error(msg, { duration: 8000 });
     } finally { setLoading(false); }
   };
 

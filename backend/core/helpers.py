@@ -1,6 +1,7 @@
 """VITA-FORM — helpers partagés (LLM, paywall, payments email)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -16,31 +17,76 @@ from .database import db
 
 logger = logging.getLogger("vitaform")
 
-
 # ---------------------------------------------------------------------------
 # LLM
 # ---------------------------------------------------------------------------
-async def call_claude(system_prompt: str, user_text: str, session_id: str) -> str:
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=session_id,
-        system_message=system_prompt,
-    ).with_model(*LLM_MODEL)
-    try:
-        response = await chat.send_message(UserMessage(text=user_text))
-    except Exception as exc:
-        msg = str(exc)
-        if "Budget has been exceeded" in msg or "budget_exceeded" in msg:
-            raise HTTPException(
-                status_code=402,
-                detail=(
-                    "Crédit Emergent LLM épuisé. Rendez-vous dans Profile → "
-                    "Universal Key → Add Balance pour recharger, puis relancez "
-                    "la génération."
-                ),
+_TRANSIENT_HINTS = ("502", "503", "504", "BadGateway", "ServiceUnavailable",
+                    "GatewayTimeout", "overloaded", "rate_limit",
+                    "Connection reset", "Connection aborted", "Read timed out",
+                    "TimeoutError", "timeout", "InternalServer")
+
+
+def _classify_llm_error(msg: str) -> str:
+    """Return one of: 'budget' | 'transient' | 'unauthorized' | 'unknown'."""
+    if "Budget has been exceeded" in msg or "budget_exceeded" in msg:
+        return "budget"
+    if "401" in msg or "Unauthorized" in msg or "invalid_api_key" in msg:
+        return "unauthorized"
+    if any(hint in msg for hint in _TRANSIENT_HINTS):
+        return "transient"
+    return "unknown"
+
+
+async def call_claude(system_prompt: str, user_text: str, session_id: str,
+                      max_retries: int = 2) -> str:
+    """Appelle Claude via Emergent + retry sur erreurs transientes (502/503/timeout)."""
+    last_msg = ""
+    for attempt in range(max_retries + 1):
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=session_id,
+            system_message=system_prompt,
+        ).with_model(*LLM_MODEL)
+        try:
+            response = await chat.send_message(UserMessage(text=user_text))
+            return response if isinstance(response, str) else str(response)
+        except Exception as exc:
+            last_msg = str(exc)
+            kind = _classify_llm_error(last_msg)
+            logger.warning(
+                "LLM attempt %d/%d failed (%s): %s",
+                attempt + 1, max_retries + 1, kind, last_msg[:300],
             )
-        raise HTTPException(status_code=502, detail=f"Erreur du moteur IA: {msg[:200]}")
-    return response if isinstance(response, str) else str(response)
+            if kind == "budget":
+                raise HTTPException(
+                    status_code=402,
+                    detail=(
+                        "Crédit Emergent LLM épuisé. Rendez-vous dans Profile → "
+                        "Universal Key → Add Balance pour recharger, puis relancez "
+                        "la génération."
+                    ),
+                )
+            if kind == "unauthorized":
+                raise HTTPException(
+                    status_code=401,
+                    detail="Clé Emergent LLM invalide ou expirée — contactez l'administrateur.",
+                )
+            if kind == "transient" and attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s
+                continue
+            # No more retries or unknown error → bubble up
+            break
+
+    raise HTTPException(
+        status_code=502,
+        detail=(
+            "Le service IA est temporairement indisponible (proxy Claude saturé "
+            "ou en maintenance). Réessayez dans 1 à 2 minutes. Si le problème "
+            "persiste, vérifiez le solde Universal Key et l'état du service "
+            "Anthropic. Détail technique : "
+            f"{last_msg[:180]}"
+        ),
+    )
 
 
 async def resolve_sources(user_id: str, payload) -> str:

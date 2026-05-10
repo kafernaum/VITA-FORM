@@ -71,6 +71,15 @@ Plateforme EdTech full-stack qui génère des parcours de formation académiques
 ## ⚠️ État connu
 - **Crédit Emergent LLM épuisé** sur le projet de preview pendant les tests du 10/02 — recharger via Profile → Universal Key → Add Balance. Le backend détecte proprement la situation et renvoie HTTP 402 avec message FR explicite.
 
+## Bugs corrigés (11/02/2026)
+- 🐛 **Toast "Une erreur est survenue."** lors de la génération : remplacé par
+  un message contextuel clair distinguant les cas crédit épuisé / service IA
+  saturé / coupure réseau. Le backend dispose maintenant d'un retry
+  automatique (max 2 tentatives, backoff exponentiel) sur erreurs transientes
+  (502/503/504/timeout) AVANT de remonter une erreur. Côté frontend, si le
+  proxy K8s coupe la connexion à 60s, on tente automatiquement de récupérer
+  le livrable créé en arrière-plan via `GET /api/generations`.
+
 ## P0/P1/P2 backlog
 
 **P0** : aucun.
