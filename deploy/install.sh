@@ -561,12 +561,17 @@ post_checks() {
     # shellcheck disable=SC1090
     . "$ENV_FILE"
 
+    # Tests diagnostiques : non-bloquants. Aucune erreur curl ici ne doit
+    # interrompre l'installation (cert SSL pas encore propagé, DNS lent, etc.).
+    set +e
+    trap - ERR
+
     local target="${PUBLIC_APP_URL}"
     [[ $SKIP_SSL -eq 1 ]] && target="http://${DOMAIN_NAME}"
 
     # 1. API root
     info "1/5  Endpoint racine API"
-    if curl -sf --max-time 10 "${target}/api/" 2>/dev/null | grep -q "VITA-FORM"; then
+    if curl -sfk --max-time 10 "${target}/api/" 2>/dev/null | grep -q "VITA-FORM"; then
         success "API accessible sur ${target}/api/"
     else
         warn "API publique inaccessible — vérifier DNS / SSL / firewall."
@@ -578,49 +583,55 @@ post_checks() {
     local login_payload token
     login_payload=$(jq -nc --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASSWORD" \
                      '{email:$e, password:$p}')
-    token="$(curl -s --max-time 10 -X POST "${target}/api/auth/login" \
+    token="$(curl -sk --max-time 10 -X POST "${target}/api/auth/login" \
         -H "Content-Type: application/json" -d "$login_payload" \
-        2>/dev/null | jq -r '.access_token // empty')"
+        2>/dev/null | jq -r '.access_token // empty' 2>/dev/null)"
     if [[ -n "$token" ]]; then
         success "Compte admin opérationnel."
     else
-        warn "Login admin échoué — vérifier les logs backend."
+        warn "Login admin échoué (le serveur démarre peut-être encore — réessayez : $DEPLOY_DIR/manage.sh status)."
     fi
 
     # 3. Institutions seedées
     info "3/5  Institutions seedées"
     local count
-    count="$(curl -s --max-time 10 "${target}/api/institutions" 2>/dev/null \
+    count="$(curl -sk --max-time 10 "${target}/api/institutions" 2>/dev/null \
         | jq 'length // 0' 2>/dev/null || echo 0)"
     if [[ "${count:-0}" -ge 22 ]]; then
         success "${count} institutions seedées."
     else
-        warn "Seulement ${count} institutions (attendu ≥ 22)."
+        warn "Seulement ${count:-0} institutions (attendu ≥ 22)."
     fi
 
     # 4. Corpus jurisprudentiel
     info "4/5  Corpus jurisprudentiel (RAG)"
     if [[ -n "$token" ]]; then
-        count="$(curl -s --max-time 10 -H "Authorization: Bearer $token" \
+        count="$(curl -sk --max-time 10 -H "Authorization: Bearer $token" \
             "${target}/api/jurisprudences?limit=100" 2>/dev/null \
             | jq 'length // 0' 2>/dev/null || echo 0)"
         if [[ "${count:-0}" -ge 20 ]]; then
             success "${count} jurisprudences indexées."
         else
-            warn "Corpus partiel : ${count} entrées."
+            warn "Corpus partiel : ${count:-0} entrées."
         fi
+    else
+        warn "Skip (login admin échoué)."
     fi
 
     # 5. PayPal
     info "5/5  Configuration PayPal"
     local merchant
-    merchant="$(curl -s --max-time 10 "${target}/api/payments/options" 2>/dev/null \
-        | jq -r '.merchant_email // empty')"
+    merchant="$(curl -sk --max-time 10 "${target}/api/payments/options" 2>/dev/null \
+        | jq -r '.merchant_email // empty' 2>/dev/null)"
     if [[ "$merchant" == "$PAYPAL_BUSINESS_EMAIL" ]]; then
         success "PayPal configuré : ${merchant}"
     else
         warn "PayPal non configuré (merchant=${merchant:-vide})."
     fi
+
+    # Restaure le mode strict + trap pour la suite
+    set -e
+    trap 'on_error $LINENO' ERR
 }
 
 ###############################################################################
