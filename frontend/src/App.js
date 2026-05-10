@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "sonner";
+import { useTranslation } from "react-i18next";
 import Navbar from "@/components/Navbar";
 import Landing from "@/pages/Landing";
 import Auth from "@/pages/Auth";
@@ -23,13 +24,14 @@ function ProtectedRoute({ children, adminOnly = false }) {
 }
 
 function Shell({ children }) {
+  const { t } = useTranslation();
   return (
     <div className="vf-page vf-grain relative">
       <Navbar />
       <main className="pt-20 relative z-10">{children}</main>
       <footer className="border-t border-white/5 mt-24 py-10 text-center text-xs text-slate-500">
         <div className="vf-mono tracking-[0.3em]">VITA-FORM · DOCTRINA VITALIS</div>
-        <div className="mt-2">© {new Date().getFullYear()} — Théorie Vitaliste des Finances Publiques · Pr. Ahmed ELY Mustapha</div>
+        <div className="mt-2">{t("common.copyright", { year: new Date().getFullYear() })}</div>
       </footer>
     </div>
   );

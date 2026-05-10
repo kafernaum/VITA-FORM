@@ -1,15 +1,21 @@
+# syntax=docker/dockerfile:1.6
 FROM python:3.11-slim
 
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc \
-    && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+# Build dependencies + system fonts (Arabic support for PDF rendering)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential gcc \
+        fonts-noto-core \
+ && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+COPY backend/requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt \
+        --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+
+COPY backend/ ./
 
 EXPOSE 8001
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]

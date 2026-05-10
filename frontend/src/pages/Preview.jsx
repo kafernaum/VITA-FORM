@@ -172,6 +172,8 @@ export default function Preview() {
       <div className="mt-10 grid lg:grid-cols-4 gap-8">
         <article className={`lg:col-span-3 vf-card p-8 ${doc.unlocked ? "" : "vf-watermark"}`}>
           <div className="vf-prose relative z-0"
+            dir={doc.language === "ar" ? "rtl" : "ltr"}
+            lang={doc.language || "fr"}
             dangerouslySetInnerHTML={{ __html: renderMarkdown(doc.content) }}
             data-testid="preview-content" />
         </article>

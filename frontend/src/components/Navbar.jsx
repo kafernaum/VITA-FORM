@@ -1,18 +1,21 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
 import { Hourglass, LogOut, User2, ShieldCheck } from "lucide-react";
-
-const navItems = [
-  { to: "/theorie", label: "Théorie" },
-  { to: "/generator", label: "Générateur" },
-  { to: "/analyse", label: "Analyse Vitaliste" },
-  { to: "/library", label: "Bibliothèque" },
-  { to: "/auteur", label: "Auteur" },
-];
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
+  const { t } = useTranslation();
   const nav = useNavigate();
+
+  const navItems = [
+    { to: "/theorie", label: t("nav.theorie") },
+    { to: "/generator", label: t("nav.generator") },
+    { to: "/analyse", label: t("nav.analyse") },
+    { to: "/library", label: t("nav.library") },
+    { to: "/auteur", label: t("nav.auteur") },
+  ];
 
   return (
     <nav className="vf-glass fixed top-0 left-0 right-0 z-50" data-testid="main-navbar">
@@ -43,12 +46,13 @@ export default function Navbar() {
           {user?.role === "admin" && (
             <NavLink to="/admin" data-testid="nav-admin"
               className="text-sm tracking-wide text-[#D4AF37] flex items-center gap-1">
-              <ShieldCheck className="w-4 h-4" /> Admin
+              <ShieldCheck className="w-4 h-4" /> {t("nav.admin")}
             </NavLink>
           )}
         </div>
 
         <div className="flex items-center gap-3">
+          <LanguageSwitcher />
           {user ? (
             <>
               <span className="hidden sm:flex items-center gap-2 text-sm text-slate-300" data-testid="user-badge">
@@ -61,14 +65,14 @@ export default function Navbar() {
                 onClick={() => { logout(); nav("/"); }}
                 className="vf-btn-ghost !px-3 !py-2 flex items-center gap-2"
               >
-                <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Sortir</span>
+                <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">{t("nav.logout")}</span>
               </button>
             </>
           ) : (
             <>
-              <Link to="/auth" data-testid="nav-login" className="vf-btn-ghost text-sm">Connexion</Link>
+              <Link to="/auth" data-testid="nav-login" className="vf-btn-ghost text-sm">{t("nav.login")}</Link>
               <Link to="/auth?tab=register" data-testid="nav-register" className="vf-btn-primary text-sm hidden sm:inline-block">
-                Créer un compte
+                {t("nav.register")}
               </Link>
             </>
           )}

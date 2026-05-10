@@ -1,0 +1,101 @@
+{
+  "common": {
+    "appName": "VITA-FORM",
+    "tagline": "DOCTRINA · VITALIS",
+    "copyright": "© {{year}} — Théorie Vitaliste des Finances Publiques · Pr. Ahmed ELY Mustapha",
+    "loading": "Chargement…",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "close": "Fermer",
+    "search": "Rechercher",
+    "yes": "Oui",
+    "no": "Non",
+    "back": "Retour",
+    "next": "Suivant",
+    "submit": "Envoyer",
+    "confirm": "Confirmer",
+    "language": "Langue",
+    "french": "Français",
+    "arabic": "العربية"
+  },
+  "nav": {
+    "theorie": "Théorie",
+    "generator": "Générateur",
+    "analyse": "Analyse Vitaliste",
+    "library": "Bibliothèque",
+    "auteur": "Auteur",
+    "admin": "Admin",
+    "login": "Connexion",
+    "register": "Créer un compte",
+    "logout": "Sortir"
+  },
+  "landing": {
+    "tag": "Plateforme académique vitaliste",
+    "title": "La doctrine qui réécrit la finance publique en années de vie humaine.",
+    "subtitle": "VITA-FORM compose des cours, études de cas et simulations pour les ENA et ENFIP francophones, calibrés au pays, au cycle et au volume horaire — chaque livrable passé au crible de la Théorie Vitaliste du Pr. Ahmed ELY Mustapha.",
+    "ctaStart": "Lancer la génération",
+    "ctaTheory": "Découvrir la doctrine",
+    "stat1": "Institutions ENA/ENFIP couvertes",
+    "stat2": "Pays francophones initialement",
+    "stat3": "Modules par programme",
+    "feat1Title": "Cours sur-mesure",
+    "feat1Body": "Précisez le pays, le cycle et le sujet : VITA-FORM produit un programme complet (plan, cours, TD, étude de cas, quiz) calibré pour l'institution.",
+    "feat2Title": "Analyse vitaliste pratique",
+    "feat2Body": "Convertissez n'importe quel budget, prêt ou bilan en années de vie humaine. Verdict doctrinal automatique.",
+    "feat3Title": "Exports académiques",
+    "feat3Body": "Téléchargement PDF imprimerie, Word commenté ou slides projetables — tous structurés selon les exigences vitalistes."
+  },
+  "auth": {
+    "loginTab": "Connexion",
+    "registerTab": "S'inscrire",
+    "fullName": "Nom complet",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "loginButton": "Se connecter",
+    "registerButton": "Créer mon compte",
+    "loginSuccess": "Bienvenue dans VITA-FORM.",
+    "registerSuccess": "Compte créé. Bienvenue !",
+    "errorGeneric": "Une erreur est survenue."
+  },
+  "generator": {
+    "title": "Générateur de programme vitaliste",
+    "subtitle": "Décrivez le thème, l'institution destinataire et le format. VITA-FORM produit un livrable académique complet.",
+    "topicLabel": "Thème / Sujet",
+    "topicPlaceholder": "Ex : La dette publique souveraine et le sacrifice générationnel",
+    "countryLabel": "Pays",
+    "institutionLabel": "Institution",
+    "cycleLabel": "Cycle",
+    "durationLabel": "Durée",
+    "yearLabel": "Année académique",
+    "languageLabel": "Langue de génération",
+    "languageHelp": "Le contenu pédagogique sera rédigé dans la langue choisie.",
+    "sourcesLabel": "Sources libres (facultatif)",
+    "sourcesPlaceholder": "Notes, extraits de textes ou références à intégrer dans la génération…",
+    "uploadLabel": "Documents sources (PDF, DOCX, TXT — 10 Mo max)",
+    "uploadHint": "Glissez vos documents pour qu'ils soient injectés dans la génération.",
+    "submit": "Générer le livrable",
+    "generating": "Génération en cours…",
+    "successToast": "Livrable généré. Redirection vers l'aperçu."
+  },
+  "preview": {
+    "title": "Aperçu du livrable",
+    "previewLocked": "Aperçu tronqué — débloquez le livrable pour la version complète.",
+    "downloadPdf": "Télécharger PDF",
+    "downloadDocx": "Télécharger Word",
+    "downloadSlides": "Télécharger Slides",
+    "unlockTitle": "Débloquer le livrable",
+    "tabPaypal": "PayPal",
+    "tabWire": "Virement bancaire",
+    "wirePending": "Virement déclaré — l'administrateur validera sous 24-72h."
+  },
+  "library": {
+    "title": "Bibliothèque",
+    "subtitle": "Vos livrables générés.",
+    "empty": "Aucun livrable. Lancez votre première génération."
+  },
+  "footer": {
+    "quote": "« On ne manipule pas des chiffres, mais des âmes. »"
+  }
+}

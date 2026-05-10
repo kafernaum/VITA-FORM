@@ -85,7 +85,13 @@ Utilise du Markdown structuré. Chaque section doit être SUBSTANTIELLE. Conclus
 
 def build_vitalist_analysis_prompt(document_type: str, document_text: str,
                                     monetary_amount: float, country: str,
-                                    daily_salary: float) -> str:
+                                    daily_salary: float, language: str = "fr") -> str:
+    if language == "ar":
+        lang_instr = ("\n\n## لغة التحرير\n"
+                      "**حرّر التحليل كاملاً باللغة العربية الفصحى مع الإبقاء على المراجع "
+                      "القانونية بلغتها الأصلية. اعتمد ترقيماً عربياً للعناوين الرئيسية.**")
+    else:
+        lang_instr = ""
     return f"""Analyse vitaliste rigoureuse du document suivant.
 
 ## Métadonnées
@@ -107,4 +113,4 @@ def build_vitalist_analysis_prompt(document_type: str, document_text: str,
 5. **Verdict doctrinal** : ce document constitue-t-il une restitution juste, un gaspillage, ou un vol d'âmes ? Argumente.
 6. **Recommandations de réécriture** du document sous l'angle vitaliste.
 
-Sois implacable, rigoureux, et académique. Utilise du Markdown."""
+Sois implacable, rigoureux, et académique. Utilise du Markdown.{lang_instr}"""

@@ -4,59 +4,90 @@
 Plateforme EdTech full-stack qui génère des parcours de formation académiques (cours, TD, études de cas, simulations) en droit et finances publiques, tous passés au crible de la **Théorie Vitaliste des Finances Publiques** du Pr. Ahmed ELY Mustapha. Cible : ENA, ENFIP, INSP de Mauritanie, Tunisie, Maroc, Algérie, Libye et France.
 
 ## Architecture
-- **Frontend** : React 19 + React Router 7 + Tailwind + Shadcn/UI, fontes Cormorant Garamond + Outfit + JetBrains Mono, thème dark academia (deep blue `#0A1128` + or `#D4AF37`).
-- **Backend** : FastAPI + Motor (MongoDB) + JWT auth + bcrypt, Claude Sonnet 4.5 via `emergentintegrations`, ReportLab (PDF) + python-docx (DOCX) + HTML slides.
-- **Database** : MongoDB (collections `users`, `generations`, `payments`, `institutions`).
+- **Frontend** : React 19 + React Router 7 + Tailwind + Shadcn/UI + **react-i18next (FR/AR bilingue)**, fontes Cormorant Garamond / Outfit / JetBrains Mono + Noto Naskh Arabic / Amiri (RTL), thème dark academia (deep blue `#0A1128` + or `#D4AF37`).
+- **Backend (refactoré 10/02)** : FastAPI éclaté en modules `core/` (config, database, security, models, helpers, bootstrap) et `routers/` (auth, meta, generations, sources, rag, payments, admin). Motor (MongoDB) + JWT auth + bcrypt, Claude Sonnet 4.5 via `emergentintegrations`, ReportLab (PDF AR/FR via arabic-reshaper + python-bidi + NotoNaskhArabic) + python-docx (DOCX RTL) + HTML slides bilingues.
+- **Database** : MongoDB (`users`, `generations` [+ champ `language`], `payment_transactions`, `institutions`, `jurisprudences`, `bank_accounts`, `sources`).
+- **Déploiement** : Docker Compose (mongo + backend + frontend + nginx) + Nginx hôte + Let's Encrypt + script `install.sh` v2.0 interactif robuste + `manage.sh` helper.
 
 ## Personas
-1. **Apprenant / fonctionnaire** : génère gratuitement des parcours, paie 14,90 € pour télécharger PDF/Word/Slides.
+1. **Apprenant / fonctionnaire** : génère gratuitement des parcours en FR ou AR, paie 14,90 € pour télécharger PDF/Word/Slides.
 2. **Formateur d'ENA / professeur** : utilise les TD et études de cas générés pour ses promotions.
-3. **SuperAdmin** : gère utilisateurs (VIP bypass), institutions et stats.
+3. **SuperAdmin** : gère utilisateurs (VIP bypass), institutions, comptes bancaires, virements pendants, revenus.
 
 ## Core requirements (MVP)
 - Inscription/Connexion JWT ✅
-- Page d'accueil héro + théorie ✅
-- Page `/theorie` (doctrine vitaliste) ✅
-- Page `/auteur` (bio Pr. Mustapha + photo + Amazon + LinkedIn bleu/vert) ✅
-- Générateur de cours (institution, cycle, durée, sources) ✅
-- Module Analyse Vitaliste (Valeur-Vie = Montant ÷ Salaire Journalier) ✅
+- Page d'accueil héro + théorie + page auteur (Amazon + LinkedIn) ✅
+- Générateur de cours bilingue FR/AR ✅
+- Module Analyse Vitaliste (Valeur-Vie) bilingue FR/AR ✅
+- Upload sources (PDF/DOCX/TXT) + extraction texte ✅
+- RAG jurisprudentiel (22 entrées seedées) ✅
+- Paiement PayPal (Merchant `ely.mustapha@yahoo.ca`) + IPN webhook ✅
+- Paiement par virement bancaire (déclaration + validation admin) ✅
 - Aperçu watermarqué + paywall PDF/DOCX/Slides ✅
-- Bibliothèque utilisateur ✅
-- Tableau de bord SuperAdmin (users + VIP toggle + institutions CRUD + stats) ✅
+- Email transactionnel Resend après paiement ✅
+- Tableau de bord SuperAdmin (users + VIP + institutions + jurisprudences + comptes bancaires + virements pendants + recettes) ✅
 
-## Implémenté (10/02/2026)
-- 22 institutions seedées (MR, TN, MA, DZ, LY, FR — ENA/ENFIP/Universités/Instituts).
-- Compte admin auto-créé : `admin@vita-form.com / VitaForm2026!Admin` (VIP).
-- Prompt système doctrinal vitaliste ingérant les concepts du livre du Pr. Mustapha.
-- Exports PDF (ReportLab), DOCX (python-docx), HTML-slides académiques.
-- Paywall hermétique côté API (HTTP 402 si non-VIP non-payé).
-- Mock checkout (carte/PayPal) pour MVP.
+## Implémenté (chronologie)
 
-## ⚠️ MOCKED / TODO
-- **Paiement** : actuellement MOCK (`/api/payments/mock-checkout`). Il faut intégrer Stripe (clé test disponible) et/ou PayPal (compte cible `ely.mustapha@yahoo.ca`, Merchant ID `XGYL8NPMKHDUY`).
-- **RAG juridique** : pas encore connecté à une base de jurisprudence — le LLM s'appuie sur ses connaissances + le corpus doctrinal vitaliste.
-- **Upload de PDF/sources** : pour le moment l'utilisateur colle ses sources en texte. À enrichir avec object storage + parsing.
-- **Déploiement VPS port 8005 + Nginx + Certbot** : non scripté (la plateforme Emergent gère le déploiement).
-- **Crédit Emergent LLM** : ⚠️ épuisé pendant les tests — recharger via Profile → Universal Key → Add Balance.
+### 10/02/2026 — Session courante
+- ♻️  **Refactor backend** : `server.py` (1189 → 60 lignes) éclaté en `core/` + `routers/`. Tous les endpoints conservés à l'identique.
+- 🌍 **Bilingue FR/AR complet** :
+  - i18n côté frontend (react-i18next + LanguageDetector + persistance localStorage)
+  - Sélecteur de langue dans le Navbar (FR / AR pill)
+  - Application automatique de `dir="rtl"` + `lang="ar"` sur `<html>`
+  - Polices Noto Naskh Arabic + Amiri chargées via Google Fonts
+  - CSS RTL : navbar miroir, listes/blockquotes inversées, watermark traduit
+  - Pages traduites : Navbar, Footer, Landing, Auth, Generator, Library, Preview
+  - Generator : sélecteur de langue de génération (FR/AR — activable pour MR/TN/MA/DZ/LY)
+  - Backend : `build_course_prompt(language='ar')` ajoute instruction de rédaction en arabe littéraire moderne
+  - `build_vitalist_analysis_prompt(language='ar')` idem
+  - Exporters bilingues :
+    - PDF : enregistrement police NotoNaskhArabic + arabic_reshaper + python-bidi pour rendu RTL correct
+    - DOCX : flag `w:bidi` + alignement RTL + police Arial pour script complexe
+    - HTML Slides : `dir="rtl"` + import Google Fonts Amiri/Naskh
+- 🚀 **Nouveau `install.sh` v2.0** robuste pour premier déploiement :
+  - Modes : `install` | `--update` | `--reconfigure` | `--skip-ssl` | `--skip-dns` | `--non-interactive`
+  - Validation entrées (email, domaine, mot de passe ≥8 caractères)
+  - Pre-flight checks (RAM, disque, ports 80/443/8005)
+  - Logs horodatés dans `/var/log/vita-form/install-*.log`
+  - Backups automatiques avant chaque `git pull` ou rewrite de `.env`
+  - Healthchecks Docker pour mongo + backend
+  - shellcheck-clean
+- 🚀 **Nouveau `manage.sh`** : helper de production (`logs`, `restart`, `backup`, `update`, `status`, `shell-backend`, `shell-mongo`)
+- 🔧 **Fix Dockerfiles** : contextes de build corrigés (root project) + ajout fonts-noto-core dans l'image backend pour rendu PDF arabe
+- 🔧 **Nginx container** lié à `127.0.0.1:8005` au lieu de `0.0.0.0:8005` (sécurité — n'est plus accessible directement depuis Internet)
+
+### 10/02/2026 — Sessions précédentes
+- 22 institutions seedées (MR, TN, MA, DZ, LY, FR)
+- 22 jurisprudences seedées (RAG full-text MongoDB)
+- Compte admin auto-créé : `admin@vita-form.com / VitaForm2026!Admin` (VIP)
+- Object Storage pour uploads de sources (Emergent)
+- Resend pour emails post-paiement
+- PayPal Merchant + IPN webhook
+- Wire transfer flow complet
+- Tableau de bord recettes
+- Stripe complètement retiré
+
+## ⚠️ État connu
+- **Crédit Emergent LLM épuisé** sur le projet de preview pendant les tests du 10/02 — recharger via Profile → Universal Key → Add Balance. Le backend détecte proprement la situation et renvoie HTTP 402 avec message FR explicite.
 
 ## P0/P1/P2 backlog
-**P0**
-- [ ] Recharger crédit Emergent LLM ou injecter la clé Anthropic du client.
-- [ ] Intégration Stripe + PayPal réelle (remplacer le mock).
+
+**P0** : aucun.
 
 **P1**
-- [ ] Upload de fichiers (PDF/DOCX/TXT) avec extraction texte (object storage + emergentintegrations).
-- [ ] Module RAG : index Mongo Atlas Search ou Chroma sur lois/jurisprudences.
-- [ ] Email transactionnel (Resend) à l'inscription et après paiement.
+- [ ] Notification email Admin sur virement initié (Resend → `ely.mustapha@yahoo.ca` quand un user clique « Signaler le virement »). Enhancement proposé non encore confirmé par l'utilisateur — différé après validation P3.
 
 **P2**
-- [ ] Génération multilingue (arabe pour MR/TN/MA/DZ/LY).
-- [ ] Statistiques pédagogiques (progression de l'apprenant).
-- [ ] Système d'invitation pour les institutions (codes promo).
-- [ ] Docker-compose + script Nginx/Certbot pour VPS port 8005.
+- [ ] Compléter la traduction AR sur les pages : `Theorie`, `Auteur`, `Analyse`, `PaymentSuccess`, `Admin` (clés i18n existent dans `fr.json`/`ar.json` à enrichir).
+- [ ] Tableau de bord utilisateur affichant l'historique de ses paiements (PayPal + virements) en temps réel.
 
-## Routes Frontend
-`/`, `/auth`, `/theorie`, `/auteur`, `/generator`, `/analyse`, `/library`, `/preview/:id`, `/admin`.
+**Refactoring**
+- [x] ✅ Split `server.py` en `core/` + `routers/`.
+- [ ] Tests pytest dans `/app/backend/tests/` pour les routers (auth, generations, payments, admin).
 
-## Endpoints clés
-`POST /api/auth/{register,login}`, `GET /api/auth/me`, `GET /api/meta/options`, `GET /api/institutions`, `POST /api/generations`, `GET /api/generations[/:id]`, `GET /api/generations/:id/download/{pdf,docx,slides}`, `POST /api/vitalist/analyze`, `POST /api/payments/mock-checkout`, `GET/POST/DELETE /api/admin/{users,stats,generations,institutions}`.
+## Clés et secrets
+- Admin : `admin@vita-form.com / VitaForm2026!Admin` (cf `/app/memory/test_credentials.md`)
+- `EMERGENT_LLM_KEY` dans `/app/backend/.env`
+- `RESEND_API_KEY` dans `/app/backend/.env`
+- PayPal merchant : `ely.mustapha@yahoo.ca` (Merchant ID `XGYL8NPMKHDUY`)

@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Hourglass, Sparkles, Upload, X, Search, Trash2 } from "lucide-react";
+import { Hourglass, Sparkles, Upload, Search, Trash2 } from "lucide-react";
 
 const COUNTRIES = [
-  { code: "MR", label: "Mauritanie" },
-  { code: "TN", label: "Tunisie" },
-  { code: "MA", label: "Maroc" },
-  { code: "DZ", label: "Algérie" },
-  { code: "LY", label: "Libye" },
-  { code: "FR", label: "France" },
+  { code: "MR", label: "Mauritanie", labelAr: "موريتانيا" },
+  { code: "TN", label: "Tunisie", labelAr: "تونس" },
+  { code: "MA", label: "Maroc", labelAr: "المغرب" },
+  { code: "DZ", label: "Algérie", labelAr: "الجزائر" },
+  { code: "LY", label: "Libye", labelAr: "ليبيا" },
+  { code: "FR", label: "France", labelAr: "فرنسا" },
 ];
 
 const ARABIC_COUNTRIES = ["MR", "TN", "MA", "DZ", "LY"];
 
 export default function Generator() {
+  const { t, i18n } = useTranslation();
+  const isAr = i18n.resolvedLanguage === "ar";
   const [country, setCountry] = useState("FR");
   const [institutions, setInstitutions] = useState([]);
   const [institutionId, setInstitutionId] = useState("");
@@ -50,7 +53,7 @@ export default function Generator() {
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { toast.error("Fichier > 10 Mo"); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error(t("generator.uploadHint")); return; }
     setUploading(true);
     const fd = new FormData();
     fd.append("file", file);
@@ -58,11 +61,11 @@ export default function Generator() {
       const { data } = await api.post("/sources/upload", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      toast.success(`Source ajoutée (${data.extracted_chars.toLocaleString()} car. extraits)`);
+      toast.success(`Source +${data.extracted_chars.toLocaleString()} ${isAr ? "حرف" : "car."}`);
       await refreshSources();
       setSelectedSourceIds((ids) => [...ids, data.id]);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Échec upload");
+      toast.error(err?.response?.data?.detail || t("auth.errorGeneric"));
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -81,8 +84,8 @@ export default function Generator() {
         params: { q: jurisQuery, country: COUNTRIES.find((c) => c.code === country)?.label, limit: 10 },
       });
       setJurisResults(data);
-      if (!data.length) toast.info("Aucune jurisprudence trouvée pour cette requête.");
-    } catch { toast.error("Recherche impossible"); }
+      if (!data.length) toast.info(isAr ? "لا توجد نتائج." : "Aucune jurisprudence trouvée.");
+    } catch { toast.error(t("auth.errorGeneric")); }
   };
 
   const toggleJuris = (id) =>
@@ -103,11 +106,11 @@ export default function Generator() {
         jurisprudence_ids: selectedJurisIds.length ? selectedJurisIds : null,
         language,
       });
-      toast.success("Parcours généré.");
+      toast.success(t("generator.successToast"));
       nav(`/preview/${data.id}`);
     } catch (err) {
       const status = err?.response?.status;
-      const msg = err?.response?.data?.detail || "Erreur de génération.";
+      const msg = err?.response?.data?.detail || t("auth.errorGeneric");
       if (status === 402) toast.error(msg, { duration: 8000 });
       else toast.error(msg);
     } finally { setLoading(false); }
@@ -119,35 +122,33 @@ export default function Generator() {
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
       <div className="grid lg:grid-cols-3 gap-10">
         <div className="lg:col-span-2">
-          <span className="vf-tag">Moteur de génération</span>
+          <span className="vf-tag">{t("generator.title")}</span>
           <h1 className="vf-serif text-4xl sm:text-5xl mt-4 text-slate-50">
-            Composez votre <span className="italic text-[#D4AF37]">parcours vitaliste</span>
+            {t("generator.subtitle")}
           </h1>
-          <p className="text-slate-300 mt-4 max-w-2xl leading-relaxed">
-            Téléversez vos PDF/DOCX, sélectionnez des jurisprudences indexées, choisissez la langue.
-            VITA-FORM passe l'ensemble au crible doctrinal.
-          </p>
 
           <form onSubmit={submit} className="mt-10 vf-card p-8 space-y-6" data-testid="generator-form">
             <div>
-              <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">THÈME / SUJET</label>
+              <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.topicLabel")}</label>
               <input
                 data-testid="gen-topic" value={topic} onChange={(e) => setTopic(e.target.value)}
                 required minLength={4}
-                placeholder="Ex. La dette publique mauritanienne sous l'angle vitaliste"
+                placeholder={t("generator.topicPlaceholder")}
                 className="vf-input w-full mt-2 px-3 py-3"
               />
             </div>
             <div className="grid sm:grid-cols-2 gap-5">
               <div>
-                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">PAYS</label>
+                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.countryLabel")}</label>
                 <select data-testid="gen-country" value={country} onChange={(e) => setCountry(e.target.value)}
                   className="vf-input w-full mt-2 px-3 py-3">
-                  {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>{isAr ? c.labelAr : c.label}</option>
+                  ))}
                 </select>
               </div>
               <div>
-                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">INSTITUTION</label>
+                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.institutionLabel")}</label>
                 <select data-testid="gen-institution" value={institutionId}
                   onChange={(e) => setInstitutionId(e.target.value)}
                   className="vf-input w-full mt-2 px-3 py-3">
@@ -157,59 +158,57 @@ export default function Generator() {
                 </select>
               </div>
               <div>
-                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">CYCLE</label>
+                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.cycleLabel")}</label>
                 <select data-testid="gen-cycle" value={cycle} onChange={(e) => setCycle(e.target.value)} required
                   className="vf-input w-full mt-2 px-3 py-3">
-                  <option value="">— Choisir —</option>
+                  <option value="">— —</option>
                   {meta.cycles?.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">DURÉE</label>
+                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.durationLabel")}</label>
                 <select data-testid="gen-duration" value={duration} onChange={(e) => setDuration(e.target.value)} required
                   className="vf-input w-full mt-2 px-3 py-3">
-                  <option value="">— Choisir —</option>
+                  <option value="">— —</option>
                   {meta.durations?.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">ANNÉE ACADÉMIQUE</label>
+                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.yearLabel")}</label>
                 <input data-testid="gen-year" type="number" value={year} min={2024} max={2100}
                   onChange={(e) => setYear(parseInt(e.target.value || "0"))}
                   className="vf-input w-full mt-2 px-3 py-3" />
               </div>
               <div>
-                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">LANGUE DE RÉDACTION</label>
+                <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.languageLabel")}</label>
                 <select data-testid="gen-language" value={language} onChange={(e) => setLanguage(e.target.value)}
                   className="vf-input w-full mt-2 px-3 py-3">
                   <option value="fr">Français</option>
                   <option value="ar" disabled={!arabicAvailable}>
                     {arabicAvailable
-                      ? "العربية (arabe)"
-                      : "العربية (arabe) — pays MENA uniquement"}
+                      ? "العربية"
+                      : "العربية — MENA"}
                   </option>
                 </select>
               </div>
             </div>
 
-            {/* Sources libres */}
             <div>
-              <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">SOURCES LIBRES (TEXTE COLLÉ)</label>
+              <label className="text-xs vf-mono tracking-[0.2em] text-slate-400">{t("generator.sourcesLabel")}</label>
               <textarea data-testid="gen-sources" value={sources} onChange={(e) => setSources(e.target.value)} rows={3}
-                placeholder="Collez ici lois, articles, conventions..."
+                placeholder={t("generator.sourcesPlaceholder")}
                 className="vf-input w-full mt-2 px-3 py-3 resize-y" />
             </div>
 
-            {/* Upload PDF/DOCX */}
             <div className="border border-[#1E293B] p-5 bg-[#0F1730]">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-xs vf-mono tracking-[0.2em] text-[#D4AF37]/80">SOURCES TÉLÉVERSÉES</div>
-                  <p className="text-xs text-slate-500 mt-1">PDF, DOCX, TXT — 10 Mo max. Texte extrait automatiquement.</p>
+                  <div className="text-xs vf-mono tracking-[0.2em] text-[#D4AF37]/80">{t("generator.uploadLabel")}</div>
+                  <p className="text-xs text-slate-500 mt-1">{t("generator.uploadHint")}</p>
                 </div>
                 <label className="vf-btn-ghost cursor-pointer flex items-center gap-2 text-xs" data-testid="upload-source-btn">
                   <Upload className="w-4 h-4" />
-                  {uploading ? "Envoi…" : "Téléverser"}
+                  {uploading ? "…" : t("common.submit")}
                   <input type="file" accept=".pdf,.docx,.txt" hidden onChange={handleUpload} disabled={uploading} />
                 </label>
               </div>
@@ -234,16 +233,14 @@ export default function Generator() {
               )}
             </div>
 
-            {/* Jurisprudence search */}
             <div className="border border-[#1E293B] p-5 bg-[#0F1730]">
-              <div className="text-xs vf-mono tracking-[0.2em] text-[#D4AF37]/80">JURISPRUDENCE / CORPUS JURIDIQUE</div>
-              <p className="text-xs text-slate-500 mt-1">Recherche full-text dans le corpus VITA-FORM (admin).</p>
+              <div className="text-xs vf-mono tracking-[0.2em] text-[#D4AF37]/80">{t("nav.analyse")} · RAG</div>
               <div className="flex gap-2 mt-3">
                 <input value={jurisQuery} onChange={(e) => setJurisQuery(e.target.value)}
-                  placeholder="Ex. dette souveraine, marchés publics, LOLF…"
+                  placeholder={t("common.search") + "…"}
                   className="vf-input flex-1 px-3 py-2" data-testid="juris-q" />
                 <button type="button" onClick={searchJuris} className="vf-btn-ghost flex items-center gap-2" data-testid="juris-search">
-                  <Search className="w-4 h-4" /> Chercher
+                  <Search className="w-4 h-4" /> {t("common.search")}
                 </button>
               </div>
               {jurisResults.length > 0 && (
@@ -269,14 +266,14 @@ export default function Generator() {
             <button type="submit" disabled={!canSubmit || loading} data-testid="gen-submit"
               className="vf-btn-primary w-full inline-flex items-center justify-center gap-3 py-3">
               {loading ? (
-                <><Hourglass className="w-4 h-4 vf-spin" /> Génération vitaliste en cours…</>
+                <><Hourglass className="w-4 h-4 vf-spin" /> {t("generator.generating")}</>
               ) : (
-                <><Sparkles className="w-4 h-4" /> Générer le parcours</>
+                <><Sparkles className="w-4 h-4" /> {t("generator.submit")}</>
               )}
             </button>
             {loading && (
               <p className="text-xs text-slate-400 text-center">
-                Compilation doctrinale puis rédaction académique — 30 à 90 secondes.
+                {t("generator.generating")} — 30-90s.
               </p>
             )}
           </form>
@@ -284,25 +281,18 @@ export default function Generator() {
 
         <aside className="space-y-5">
           <div className="vf-frame bg-[#0F1730]/60">
-            <div className="vf-mono text-[0.7rem] tracking-[0.3em] text-[#D4AF37]/80">LIVRABLES INCLUS</div>
+            <div className="vf-mono text-[0.7rem] tracking-[0.3em] text-[#D4AF37]/80">VITA-FORM</div>
             <ul className="text-sm text-slate-300 mt-4 space-y-2">
-              <li>• Plan général + volumes horaires</li>
-              <li>• Cadrage doctrinal vitaliste</li>
-              <li>• Cours académique principal</li>
-              <li>• TD corrigé + Étude de cas</li>
-              <li>• Scénario de simulation</li>
-              <li>• Quiz d'évaluation type ENA</li>
-              <li>• Bibliographie 10+ références</li>
-              <li>• Réécriture vitaliste finale</li>
+              <li>• {t("landing.feat1Body")}</li>
             </ul>
           </div>
           <div className="vf-card p-6">
-            <div className="vf-mono text-[0.7rem] tracking-[0.3em] text-[#D4AF37]/80">PAYWALL</div>
+            <div className="vf-mono text-[0.7rem] tracking-[0.3em] text-[#D4AF37]/80">{t("preview.unlockTitle")}</div>
             <p className="text-sm text-slate-300 mt-3 leading-relaxed">
-              Aperçu watermarqué gratuit. Téléchargement <strong>PDF / Word / Slides</strong> à <strong className="text-[#D4AF37]">14,90 €</strong>.
+              <strong className="text-[#D4AF37]">14,90 €</strong> · PDF / Word / Slides
             </p>
             <p className="text-xs text-slate-500 mt-3 italic">
-              Carte Stripe test : 4242 4242 4242 4242 + date future + CVC.
+              PayPal · {t("preview.tabWire")}
             </p>
           </div>
           {language === "ar" && (

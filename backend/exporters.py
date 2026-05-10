@@ -10,16 +10,51 @@ from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, PageBreak,
 )
-from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_RIGHT
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 
 GOLD = colors.HexColor("#B8860B")
 DEEP_BLUE = colors.HexColor("#0A1128")
 SLATE = colors.HexColor("#334155")
+
+ARABIC_FONT_PATH = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"
+ARABIC_FONT_BOLD_PATH = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"
+_ARABIC_FONTS_REGISTERED = False
+
+
+def _ensure_arabic_fonts() -> None:
+    global _ARABIC_FONTS_REGISTERED
+    if _ARABIC_FONTS_REGISTERED:
+        return
+    try:
+        pdfmetrics.registerFont(TTFont("NotoArabic", ARABIC_FONT_PATH))
+        pdfmetrics.registerFont(TTFont("NotoArabic-Bold", ARABIC_FONT_BOLD_PATH))
+        _ARABIC_FONTS_REGISTERED = True
+    except Exception:
+        # Fallback: keep Latin fonts; Arabic glyphs may not render but rest works.
+        pass
+
+
+def _shape_ar(text: str) -> str:
+    """Reshape Arabic text + apply BiDi for correct RTL glyph order."""
+    if not text:
+        return text
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        return get_display(reshaped)
+    except Exception:
+        return text
 
 
 def _md_to_blocks(md: str):
@@ -54,7 +89,20 @@ def _strip_md_inline(text: str) -> str:
     return text
 
 
-def render_pdf(title: str, author: str, institution: str, content_md: str) -> bytes:
+def render_pdf(title: str, author: str, institution: str, content_md: str,
+               language: str = "fr") -> bytes:
+    is_ar = language == "ar"
+    if is_ar:
+        _ensure_arabic_fonts()
+
+    body_font = "NotoArabic" if is_ar else "Times-Roman"
+    bold_font = "NotoArabic-Bold" if is_ar else "Times-Bold"
+    italic_font = "NotoArabic" if is_ar else "Times-Italic"
+    body_align = TA_RIGHT if is_ar else TA_JUSTIFY
+
+    def t(text: str) -> str:
+        return _shape_ar(text) if is_ar else text
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
@@ -63,61 +111,90 @@ def render_pdf(title: str, author: str, institution: str, content_md: str) -> by
         title=title, author="VITA-FORM",
     )
     styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontName="Times-Bold",
-                       fontSize=22, textColor=DEEP_BLUE, spaceAfter=18, leading=26)
-    h2 = ParagraphStyle("H2", parent=styles["Heading2"], fontName="Times-Bold",
-                       fontSize=16, textColor=GOLD, spaceBefore=14, spaceAfter=8)
-    h3 = ParagraphStyle("H3", parent=styles["Heading3"], fontName="Times-Bold",
-                       fontSize=13, textColor=SLATE, spaceBefore=10, spaceAfter=6)
-    body = ParagraphStyle("Body", parent=styles["BodyText"], fontName="Times-Roman",
-                         fontSize=11, leading=16, alignment=TA_JUSTIFY, spaceAfter=6)
+    h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontName=bold_font,
+                       fontSize=22, textColor=DEEP_BLUE, spaceAfter=18, leading=26,
+                       alignment=body_align)
+    h2 = ParagraphStyle("H2", parent=styles["Heading2"], fontName=bold_font,
+                       fontSize=16, textColor=GOLD, spaceBefore=14, spaceAfter=8,
+                       alignment=body_align)
+    h3 = ParagraphStyle("H3", parent=styles["Heading3"], fontName=bold_font,
+                       fontSize=13, textColor=SLATE, spaceBefore=10, spaceAfter=6,
+                       alignment=body_align)
+    body = ParagraphStyle("Body", parent=styles["BodyText"], fontName=body_font,
+                         fontSize=11, leading=16, alignment=body_align, spaceAfter=6)
     quote = ParagraphStyle("Quote", parent=body, leftIndent=20, rightIndent=20,
-                          textColor=GOLD, fontName="Times-Italic", borderPadding=6)
+                          textColor=GOLD, fontName=italic_font, borderPadding=6)
     li = ParagraphStyle("Li", parent=body, leftIndent=18, bulletIndent=8)
-    cover_title = ParagraphStyle("Cover", parent=styles["Title"], fontName="Times-Bold",
+    cover_title = ParagraphStyle("Cover", parent=styles["Title"], fontName=bold_font,
                                  fontSize=28, textColor=DEEP_BLUE, alignment=TA_CENTER,
                                  spaceAfter=12, leading=34)
-    cover_sub = ParagraphStyle("CoverSub", parent=styles["Italic"], fontName="Times-Italic",
+    cover_sub = ParagraphStyle("CoverSub", parent=styles["Italic"], fontName=italic_font,
                               fontSize=14, textColor=GOLD, alignment=TA_CENTER, spaceAfter=8)
 
     story = []
     # Cover
     story.append(Spacer(1, 4 * cm))
-    story.append(Paragraph("VITA-FORM", cover_sub))
+    story.append(Paragraph(t("VITA-FORM"), cover_sub))
     story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph(title, cover_title))
+    story.append(Paragraph(t(title), cover_title))
     story.append(Spacer(1, 0.5 * cm))
-    story.append(Paragraph("Plateforme Pédagogique Vitaliste", cover_sub))
-    story.append(Paragraph(f"Institution destinataire : {institution}", body))
-    story.append(Paragraph(f"Auteur du parcours : {author}", body))
-    story.append(Paragraph(f"Date d'émission : {datetime.now().strftime('%d %B %Y')}", body))
+    if is_ar:
+        story.append(Paragraph(t("منصة بيداغوجية حيوية"), cover_sub))
+        story.append(Paragraph(t(f"المؤسسة المستهدفة : {institution}"), body))
+        story.append(Paragraph(t(f"المؤلف : {author}"), body))
+        story.append(Paragraph(t(f"تاريخ الإصدار : {datetime.now().strftime('%d/%m/%Y')}"), body))
+    else:
+        story.append(Paragraph("Plateforme Pédagogique Vitaliste", cover_sub))
+        story.append(Paragraph(f"Institution destinataire : {institution}", body))
+        story.append(Paragraph(f"Auteur du parcours : {author}", body))
+        story.append(Paragraph(f"Date d'émission : {datetime.now().strftime('%d %B %Y')}", body))
     story.append(Spacer(1, 6 * cm))
-    story.append(Paragraph(
-        "« On ne manipule pas des chiffres, mais des âmes. »<br/>— Théorie Vitaliste des Finances Publiques",
-        quote))
+    if is_ar:
+        story.append(Paragraph(
+            t("« لا نتلاعب بالأرقام، بل بالأرواح. »") +
+            "<br/>" + t("— النظرية الحيوية للمالية العامة"),
+            quote))
+    else:
+        story.append(Paragraph(
+            "« On ne manipule pas des chiffres, mais des âmes. »<br/>— Théorie Vitaliste des Finances Publiques",
+            quote))
     story.append(PageBreak())
 
     for kind, txt in _md_to_blocks(content_md):
         if kind == "space":
             story.append(Spacer(1, 0.2 * cm))
         elif kind == "h1":
-            story.append(Paragraph(_strip_md_inline(txt), h1))
+            story.append(Paragraph(t(_strip_md_inline(txt)), h1))
         elif kind == "h2":
-            story.append(Paragraph(_strip_md_inline(txt), h2))
+            story.append(Paragraph(t(_strip_md_inline(txt)), h2))
         elif kind == "h3":
-            story.append(Paragraph(_strip_md_inline(txt), h3))
+            story.append(Paragraph(t(_strip_md_inline(txt)), h3))
         elif kind == "quote":
-            story.append(Paragraph(_strip_md_inline(txt), quote))
+            story.append(Paragraph(t(_strip_md_inline(txt)), quote))
         elif kind in ("li", "oli"):
-            story.append(Paragraph(f"• {_strip_md_inline(txt)}", li))
+            bullet = "• "
+            if is_ar:
+                story.append(Paragraph(t(_strip_md_inline(txt)) + " " + bullet, li))
+            else:
+                story.append(Paragraph(f"{bullet}{_strip_md_inline(txt)}", li))
         else:
-            story.append(Paragraph(_strip_md_inline(txt), body))
+            story.append(Paragraph(t(_strip_md_inline(txt)), body))
 
     doc.build(story)
     return buffer.getvalue()
 
 
-def render_docx(title: str, author: str, institution: str, content_md: str) -> bytes:
+def _set_paragraph_rtl(paragraph) -> None:
+    """Apply RTL directionality on a docx paragraph."""
+    pPr = paragraph._p.get_or_add_pPr()
+    bidi = OxmlElement("w:bidi")
+    bidi.set(qn("w:val"), "1")
+    pPr.append(bidi)
+
+
+def render_docx(title: str, author: str, institution: str, content_md: str,
+                language: str = "fr") -> bytes:
+    is_ar = language == "ar"
     document = Document()
     section = document.sections[0]
     section.top_margin = Cm(2.5)
@@ -126,8 +203,17 @@ def render_docx(title: str, author: str, institution: str, content_md: str) -> b
     section.right_margin = Cm(2.5)
 
     style = document.styles["Normal"]
-    style.font.name = "Calibri"
+    style.font.name = "Arial" if is_ar else "Calibri"
     style.font.size = Pt(11)
+    if is_ar:
+        # Arabic complex script font
+        rPr = style.element.get_or_add_rPr()
+        rFonts = rPr.find(qn("w:rFonts"))
+        if rFonts is None:
+            rFonts = OxmlElement("w:rFonts")
+            rPr.append(rFonts)
+        rFonts.set(qn("w:cs"), "Arial")
+        rFonts.set(qn("w:hAnsi"), "Arial")
 
     # Cover
     p = document.add_paragraph()
@@ -139,6 +225,8 @@ def render_docx(title: str, author: str, institution: str, content_md: str) -> b
 
     title_p = document.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if is_ar:
+        _set_paragraph_rtl(title_p)
     run = title_p.add_run(title)
     run.bold = True
     run.font.size = Pt(26)
@@ -146,15 +234,26 @@ def render_docx(title: str, author: str, institution: str, content_md: str) -> b
 
     meta = document.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    meta.add_run(
-        f"\nPlateforme Pédagogique Vitaliste\nInstitution : {institution}\n"
-        f"Auteur : {author}\nDate : {datetime.now().strftime('%d/%m/%Y')}"
-    )
+    if is_ar:
+        _set_paragraph_rtl(meta)
+        meta.add_run(
+            f"\nمنصة بيداغوجية حيوية\nالمؤسسة : {institution}\n"
+            f"المؤلف : {author}\nالتاريخ : {datetime.now().strftime('%d/%m/%Y')}"
+        )
+    else:
+        meta.add_run(
+            f"\nPlateforme Pédagogique Vitaliste\nInstitution : {institution}\n"
+            f"Auteur : {author}\nDate : {datetime.now().strftime('%d/%m/%Y')}"
+        )
 
     document.add_paragraph()
     quote = document.add_paragraph()
     quote.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    qrun = quote.add_run("« On ne manipule pas des chiffres, mais des âmes. »")
+    if is_ar:
+        _set_paragraph_rtl(quote)
+        qrun = quote.add_run("« لا نتلاعب بالأرقام، بل بالأرواح. »")
+    else:
+        qrun = quote.add_run("« On ne manipule pas des chiffres, mais des âmes. »")
     qrun.italic = True
     qrun.font.color.rgb = RGBColor(0xB8, 0x86, 0x0B)
 
@@ -164,27 +263,33 @@ def render_docx(title: str, author: str, institution: str, content_md: str) -> b
         clean = re.sub(r"\*\*|\*|`", "", txt)
         if kind == "space":
             document.add_paragraph()
-        elif kind == "h1":
-            document.add_heading(clean, level=1)
+            continue
+        if kind == "h1":
+            par = document.add_heading(clean, level=1)
         elif kind == "h2":
-            document.add_heading(clean, level=2)
+            par = document.add_heading(clean, level=2)
         elif kind == "h3":
-            document.add_heading(clean, level=3)
+            par = document.add_heading(clean, level=3)
         elif kind == "quote":
-            p = document.add_paragraph(style="Intense Quote")
-            p.add_run(clean).italic = True
+            par = document.add_paragraph(style="Intense Quote")
+            par.add_run(clean).italic = True
         elif kind in ("li", "oli"):
-            document.add_paragraph(clean, style="List Bullet")
+            par = document.add_paragraph(clean, style="List Bullet")
         else:
-            document.add_paragraph(clean)
+            par = document.add_paragraph(clean)
+        if is_ar:
+            _set_paragraph_rtl(par)
+            par.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     buf = io.BytesIO()
     document.save(buf)
     return buf.getvalue()
 
 
-def render_slides_html(title: str, author: str, institution: str, content_md: str) -> bytes:
+def render_slides_html(title: str, author: str, institution: str, content_md: str,
+                       language: str = "fr") -> bytes:
     """Génère un fichier HTML autonome avec slides imprimables (1 slide / page)."""
+    is_ar = language == "ar"
     blocks = _md_to_blocks(content_md)
     slides = []
     current = []
@@ -214,13 +319,24 @@ def render_slides_html(title: str, author: str, institution: str, content_md: st
         return f"<p>{clean}</p>"
 
     slides_html = []
+    if is_ar:
+        cover_tag = "VITA-FORM"
+        cover_meta_inst = institution
+        cover_meta_author = f"بقلم {author}"
+        cover_quote = "« لا نتلاعب بالأرقام، بل بالأرواح. »"
+    else:
+        cover_tag = "VITA-FORM"
+        cover_meta_inst = institution
+        cover_meta_author = f"par {author}"
+        cover_quote = "« On ne manipule pas des chiffres, mais des âmes. »"
+
     cover = f"""
     <section class="slide cover">
-      <div class="cover-tag">VITA-FORM</div>
+      <div class="cover-tag">{cover_tag}</div>
       <h1>{title}</h1>
-      <p class="cover-meta">{institution}</p>
-      <p class="cover-meta">par {author}</p>
-      <p class="cover-quote">« On ne manipule pas des chiffres, mais des âmes. »</p>
+      <p class="cover-meta">{cover_meta_inst}</p>
+      <p class="cover-meta">{cover_meta_author}</p>
+      <p class="cover-quote">{cover_quote}</p>
     </section>
     """
     slides_html.append(cover)
@@ -228,14 +344,32 @@ def render_slides_html(title: str, author: str, institution: str, content_md: st
         body = "\n".join(render_block(k, t) for k, t in slide if t.strip())
         slides_html.append(f'<section class="slide">{body}</section>')
 
+    if is_ar:
+        font_import = (
+            "<link rel='preconnect' href='https://fonts.googleapis.com'>"
+            "<link href='https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&"
+            "family=Noto+Naskh+Arabic:wght@400;700&display=swap' rel='stylesheet'>"
+        )
+        body_font = "'Noto Naskh Arabic', 'Amiri', serif"
+        lang_attr = "ar"
+        dir_attr = "rtl"
+    else:
+        font_import = ""
+        body_font = "Georgia, 'Times New Roman', serif"
+        lang_attr = "fr"
+        dir_attr = "ltr"
+
     html = f"""<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><title>{title} — VITA-FORM</title>
+<html lang=\"{lang_attr}\" dir=\"{dir_attr}\"><head><meta charset="utf-8"><title>{title} — VITA-FORM</title>
+{font_import}
 <style>
 @page {{ size: A4 landscape; margin: 0; }}
-body {{ margin:0; font-family: Georgia, 'Times New Roman', serif; background:#0A1128; color:#F8FAFC; }}
+body {{ margin:0; font-family: {body_font}; background:#0A1128; color:#F8FAFC; }}
 .slide {{ page-break-after: always; width:100%; min-height: 100vh; padding: 4rem 5rem;
          background: linear-gradient(135deg, #0A1128 0%, #131B33 100%);
-         border-left: 12px solid #D4AF37; box-sizing: border-box; }}
+         box-sizing: border-box; }}
+[dir="ltr"] .slide {{ border-left: 12px solid #D4AF37; }}
+[dir="rtl"] .slide {{ border-right: 12px solid #D4AF37; }}
 .slide.cover {{ display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }}
 .cover-tag {{ letter-spacing: .3em; color:#D4AF37; font-size: 1rem; text-transform:uppercase; margin-bottom: 2rem; }}
 .cover h1 {{ font-size: 3.5rem; margin: 0 0 1rem; color:#F8FAFC; }}
@@ -244,8 +378,9 @@ body {{ margin:0; font-family: Georgia, 'Times New Roman', serif; background:#0A
 h1 {{ color:#F8FAFC; font-size: 2.4rem; border-bottom: 2px solid #D4AF37; padding-bottom: .5rem; }}
 h2 {{ color:#D4AF37; font-size: 1.9rem; }}
 h3 {{ color:#F3E5AB; font-size: 1.4rem; }}
-p, li {{ font-size: 1.1rem; line-height: 1.7; color:#E2E8F0; }}
-blockquote {{ border-left: 4px solid #D4AF37; padding-left: 1rem; color:#F3E5AB; font-style: italic; }}
+p, li {{ font-size: 1.1rem; line-height: 1.8; color:#E2E8F0; }}
+[dir="ltr"] blockquote {{ border-left: 4px solid #D4AF37; padding-left: 1rem; color:#F3E5AB; font-style: italic; }}
+[dir="rtl"] blockquote {{ border-right: 4px solid #D4AF37; padding-right: 1rem; color:#F3E5AB; font-style: italic; }}
 @media print {{ .slide {{ min-height: auto; height: 100vh; }} }}
 </style></head><body>
 {''.join(slides_html)}
