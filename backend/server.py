@@ -878,7 +878,9 @@ async def wire_initiate(payload: WireInitiateIn,
         raise HTTPException(status_code=404, detail="Compte bancaire indisponible.")
 
     currency = payload.currency.upper()
-    amount = PAYPAL_PRICES.get(currency, PAYWALL_PRICE)
+    if currency not in PAYPAL_CURRENCIES:
+        raise HTTPException(status_code=400, detail=f"Devise non supportée : {currency}")
+    amount = PAYPAL_PRICES[currency]
     txn_id = str(uuid.uuid4())
     short_ref = f"VF-{txn_id[:8].upper()}"
 
@@ -997,21 +999,6 @@ async def admin_reject_wire(txn_id: str, reason: str = "",
 # ---------------------------------------------------------------------------
 @api.get("/admin/revenue")
 async def admin_revenue(_: dict = Depends(require_admin)):
-    pipeline = [
-        {"$match": {"payment_status": "paid"}},
-        {"$group": {
-            "_id": {
-                "month": {"$substr": ["$paid_at", 0, 7]},
-                "currency": "$currency",
-                "method": {"$ifNull": ["$method", "$provider"]},
-            },
-            "count": {"$sum": 1},
-            "total": {"$sum": "$amount"},
-        }},
-        {"$sort": {"_id.month": -1}},
-    ]
-    # paid_at is on the generations doc; payment_transactions has updated_at when paid.
-    # Use updated_at instead.
     pipeline = [
         {"$match": {"payment_status": "paid"}},
         {"$group": {
