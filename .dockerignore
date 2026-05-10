@@ -1,0 +1,45 @@
+# Build artifacts
+frontend/node_modules
+frontend/build
+frontend/.cache
+frontend/.yarn
+frontend/coverage
+
+# Python
+backend/__pycache__
+backend/**/__pycache__
+backend/.pytest_cache
+backend/.venv
+backend/venv
+backend/storage
+backend/tests
+*.pyc
+*.pyo
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+
+# Secrets & local env (do NOT bundle into images)
+backend/.env
+frontend/.env
+frontend/.env.local
+deploy/.env.production
+deploy/.env.production.bak.*
+
+# Logs
+*.log
+/var/log
+
+# Git
+.git
+.gitignore
+
+# Misc
+README.md
+.emergent
+test_reports
+memory

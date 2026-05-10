@@ -5,11 +5,17 @@ WORKDIR /app
 ARG REACT_APP_BACKEND_URL
 ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
 
-COPY frontend/package.json frontend/yarn.lock ./
-RUN yarn install --frozen-lockfile
-
+# Copy the whole frontend tree at once (no risk of missing yarn.lock).
 COPY frontend/ ./
-RUN yarn build
+
+# Install deps (frozen if lockfile present, fresh resolve otherwise).
+RUN if [ -f yarn.lock ]; then \
+        yarn install --frozen-lockfile --network-timeout 600000; \
+    else \
+        echo "⚠ yarn.lock absent — resolving fresh dependencies"; \
+        yarn install --network-timeout 600000; \
+    fi \
+ && yarn build
 
 # ── Runtime stage ──────────────────────────────────────────────────
 FROM nginx:1.27-alpine
