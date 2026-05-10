@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Crown, Trash2, Plus, Users2, FileSignature, BadgeDollarSign,
          Building2, Landmark, BarChart3, Check, X } from "lucide-react";
+import LLMProvidersPanel from "@/pages/admin/LLMProvidersPanel";
 
 export default function Admin() {
   const [tab, setTab] = useState("users");
@@ -150,6 +151,7 @@ export default function Admin() {
           { k: "banks", l: "Comptes bancaires" },
           { k: "pending", l: `Virements en attente${pendingPayments.length ? ` (${pendingPayments.length})` : ""}` },
           { k: "revenue", l: "Recettes" },
+          { k: "llm", l: "Moteurs IA" },
         ].map((t) => (
           <button
             key={t.k} onClick={() => setTab(t.k)}
@@ -509,6 +511,8 @@ export default function Admin() {
           </div>
         </div>
       )}
+
+      {tab === "llm" && <LLMProvidersPanel />}
     </div>
   );
 }

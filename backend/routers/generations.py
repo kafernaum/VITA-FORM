@@ -1,6 +1,7 @@
 """VITA-FORM — Génération de cours + analyse vitaliste + téléchargement (paywall)."""
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import uuid
@@ -11,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from core.database import db
-from core.helpers import call_claude, is_unlocked, public_generation
+from core.helpers import is_unlocked, public_generation
+from core.llm_service import call_llm
 from core.models import GenerationCreate, VitalistAnalyzeIn
 from core.security import get_current_user
 from exporters import render_docx, render_pdf, render_slides_html
@@ -27,9 +29,62 @@ logger = logging.getLogger("vitaform")
 router = APIRouter(tags=["generations"])
 
 
+# ---------------------------------------------------------------------------
+# Background generation — règle le bug des 60s K8s
+# ---------------------------------------------------------------------------
+async def _run_generation_task(gen_id: str, system_prompt: str, user_prompt: str,
+                                kind: str) -> None:
+    """Exécute Claude/OpenAI/Gemini en arrière-plan et persiste le résultat."""
+    try:
+        result = await call_llm(
+            system_prompt=system_prompt,
+            user_text=user_prompt,
+            session_id=f"{kind}-{gen_id}",
+            max_retries=1,
+        )
+        await db.generations.update_one(
+            {"id": gen_id},
+            {"$set": {
+                "status": "ready",
+                "content": result["content"],
+                "llm_provider": result["provider"],
+                "llm_model": result["model"],
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        logger.info("Generation %s ready via %s/%s (%d chars)",
+                    gen_id, result["provider"], result["model"], len(result["content"]))
+    except HTTPException as exc:
+        await db.generations.update_one(
+            {"id": gen_id},
+            {"$set": {
+                "status": "failed",
+                "error_code": exc.status_code,
+                "error_detail": str(exc.detail)[:400],
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        logger.warning("Generation %s failed: %s %s",
+                       gen_id, exc.status_code, exc.detail)
+    except Exception as exc:
+        await db.generations.update_one(
+            {"id": gen_id},
+            {"$set": {
+                "status": "failed",
+                "error_code": 500,
+                "error_detail": str(exc)[:400],
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        logger.exception("Generation %s crashed: %s", gen_id, exc)
+
+
 @router.post("/generations")
-async def create_generation(payload: GenerationCreate, user: dict = Depends(get_current_user)):
-    institution = await db.institutions.find_one({"id": payload.institution_id}, {"_id": 0})
+async def create_generation(payload: GenerationCreate,
+                             user: dict = Depends(get_current_user)):
+    institution = await db.institutions.find_one(
+        {"id": payload.institution_id}, {"_id": 0},
+    )
     if not institution:
         raise HTTPException(status_code=404, detail="Institution introuvable.")
 
@@ -44,16 +99,6 @@ async def create_generation(payload: GenerationCreate, user: dict = Depends(get_
         language=payload.language,
     )
     gen_id = str(uuid.uuid4())
-    try:
-        content = await call_claude(
-            VITALIST_SYSTEM_PROMPT, user_prompt, session_id=f"gen-{gen_id}",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Claude generation failed")
-        raise HTTPException(status_code=502, detail=f"Erreur du moteur IA: {exc}")
-
     doc = {
         "id": gen_id,
         "user_id": user["id"],
@@ -65,18 +110,25 @@ async def create_generation(payload: GenerationCreate, user: dict = Depends(get_
         "duration": payload.duration,
         "year": payload.year,
         "language": payload.language,
-        "content": content,
+        "content": "",
         "kind": "course",
+        "status": "pending",
         "paid": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.generations.insert_one(doc.copy())
+    # Lance la génération en arrière-plan — la requête revient instantanément
+    asyncio.create_task(_run_generation_task(
+        gen_id, VITALIST_SYSTEM_PROMPT, user_prompt, "gen",
+    ))
     return public_generation(doc, user)
 
 
 @router.post("/vitalist/analyze")
-async def analyze_vitalist(payload: VitalistAnalyzeIn, user: dict = Depends(get_current_user)):
-    salary_meta = DAILY_SALARIES.get(payload.country_code.upper(), DAILY_SALARIES["FR"])
+async def analyze_vitalist(payload: VitalistAnalyzeIn,
+                            user: dict = Depends(get_current_user)):
+    salary_meta = DAILY_SALARIES.get(payload.country_code.upper(),
+                                      DAILY_SALARIES["FR"])
     daily = payload.daily_salary or salary_meta["value"]
     country_label = salary_meta["label"]
 
@@ -93,16 +145,6 @@ async def analyze_vitalist(payload: VitalistAnalyzeIn, user: dict = Depends(get_
         language=payload.language,
     )
     gen_id = str(uuid.uuid4())
-    try:
-        content = await call_claude(
-            VITALIST_SYSTEM_PROMPT, user_prompt, session_id=f"vit-{gen_id}",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Vitalist analysis failed")
-        raise HTTPException(status_code=502, detail=f"Erreur du moteur IA: {exc}")
-
     metrics = {
         "monetary_amount": payload.monetary_amount,
         "currency": salary_meta["currency"],
@@ -111,7 +153,6 @@ async def analyze_vitalist(payload: VitalistAnalyzeIn, user: dict = Depends(get_
         "life_months": round(months, 2),
         "life_years": round(years, 3),
     }
-
     doc = {
         "id": gen_id,
         "user_id": user["id"],
@@ -123,16 +164,43 @@ async def analyze_vitalist(payload: VitalistAnalyzeIn, user: dict = Depends(get_
         "duration": "Rapport unique",
         "year": datetime.now().year,
         "language": payload.language,
-        "content": content,
+        "content": "",
         "kind": "vitalist_analysis",
         "metrics": metrics,
+        "status": "pending",
         "paid": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.generations.insert_one(doc.copy())
+    asyncio.create_task(_run_generation_task(
+        gen_id, VITALIST_SYSTEM_PROMPT, user_prompt, "vit",
+    ))
     out = public_generation(doc, user)
     out["metrics"] = metrics
     return out
+
+
+@router.get("/generations/{gen_id}/status")
+async def get_generation_status(gen_id: str,
+                                 user: dict = Depends(get_current_user)):
+    doc = await db.generations.find_one(
+        {"id": gen_id},
+        {"_id": 0, "id": 1, "user_id": 1, "status": 1, "error_code": 1,
+         "error_detail": 1, "completed_at": 1, "llm_provider": 1, "llm_model": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Livrable introuvable.")
+    if doc["user_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès refusé.")
+    return {
+        "id": doc["id"],
+        "status": doc.get("status", "ready"),
+        "error_code": doc.get("error_code"),
+        "error_detail": doc.get("error_detail"),
+        "llm_provider": doc.get("llm_provider"),
+        "llm_model": doc.get("llm_model"),
+        "completed_at": doc.get("completed_at"),
+    }
 
 
 @router.get("/generations")

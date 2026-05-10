@@ -74,11 +74,25 @@ Plateforme EdTech full-stack qui génère des parcours de formation académiques
 ## Bugs corrigés (11/02/2026)
 - 🐛 **Toast "Une erreur est survenue."** lors de la génération : remplacé par
   un message contextuel clair distinguant les cas crédit épuisé / service IA
-  saturé / coupure réseau. Le backend dispose maintenant d'un retry
-  automatique (max 2 tentatives, backoff exponentiel) sur erreurs transientes
-  (502/503/504/timeout) AVANT de remonter une erreur. Côté frontend, si le
-  proxy K8s coupe la connexion à 60s, on tente automatiquement de récupérer
-  le livrable créé en arrière-plan via `GET /api/generations`.
+  saturé / coupure réseau.
+- 🚀 **REFONTE ARCHITECTURE LLM (Phase critique)** : VITA-FORM ne dépend plus
+  obligatoirement de l'Universal Key Emergent. L'admin peut désormais ajouter
+  ses propres clés API (Anthropic Claude, OpenAI GPT-4o, Google Gemini)
+  directement depuis `/admin → Moteurs IA`. Bénéfices :
+  - **Génération asynchrone** : POST `/generations` retourne en <100ms avec
+    `status=pending`. Le moteur LLM tourne en arrière-plan via
+    `asyncio.create_task()`. Plus aucun timeout de 60s du proxy K8s.
+  - **Polling /status** côté Preview : barre de progression "Génération en
+    cours…", message d'erreur clair en cas d'échec, contenu affiché dès qu'il
+    est prêt — l'utilisateur peut même fermer son onglet et revenir plus tard.
+  - **Multi-provider** : SDK directs (anthropic, openai, google-genai). Pas
+    de proxy LiteLLM → pas de double facturation, pas de débit silencieux.
+  - **Sécurité** : clés API stockées chiffrées en BD, masquées dans les
+    réponses (`sk-ant…2345`).
+  - **CRUD admin** : ajouter / définir par défaut / tester (appel court de
+    validation) / supprimer un provider.
+  - **Emergent en fallback** : si aucun provider n'est actif, VITA-FORM utilise
+    la clé Emergent par défaut.
 
 ## P0/P1/P2 backlog
 

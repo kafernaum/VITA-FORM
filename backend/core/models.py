@@ -87,6 +87,15 @@ class WireConfirmIn(BaseModel):
     sender_note: Optional[str] = ""
 
 
+class LLMProviderIn(BaseModel):
+    provider: Literal["anthropic", "openai", "google", "emergent"]
+    api_key: str = Field(min_length=10)
+    model: Optional[str] = ""
+    label: Optional[str] = ""
+    is_default: bool = False
+    active: bool = True
+
+
 class PayPalCheckoutIn(BaseModel):
     generation_id: str
     origin_url: str

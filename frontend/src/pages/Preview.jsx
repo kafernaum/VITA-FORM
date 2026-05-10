@@ -53,6 +53,35 @@ export default function Preview() {
   };
   useEffect(load, [id]);
 
+  // Polling tant que le livrable est en cours de génération (status==='pending').
+  // Le serveur génère en arrière-plan via Anthropic/OpenAI/Gemini — on
+  // interroge /status toutes les 4s.
+  useEffect(() => {
+    if (!doc || doc.status !== "pending") return undefined;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const { data } = await api.get(`/generations/${id}/status`);
+        if (stopped) return;
+        if (data.status === "ready") {
+          toast.success("Livrable prêt.");
+          load();
+        } else if (data.status === "failed") {
+          toast.error(data.error_detail || "Échec de génération.",
+                      { duration: 15000 });
+          load();
+        } else {
+          setTimeout(poll, 4000);
+        }
+      } catch {
+        if (!stopped) setTimeout(poll, 6000);
+      }
+    };
+    setTimeout(poll, 3000);
+    return () => { stopped = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.status, id]);
+
   useEffect(() => {
     api.get("/payments/options").then((r) => {
       setPricing(r.data);
@@ -171,11 +200,40 @@ export default function Preview() {
 
       <div className="mt-10 grid lg:grid-cols-4 gap-8">
         <article className={`lg:col-span-3 vf-card p-8 ${doc.unlocked ? "" : "vf-watermark"}`}>
-          <div className="vf-prose relative z-0"
-            dir={doc.language === "ar" ? "rtl" : "ltr"}
-            lang={doc.language || "fr"}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(doc.content) }}
-            data-testid="preview-content" />
+          {doc.status === "pending" ? (
+            <div className="py-16 text-center" data-testid="preview-pending">
+              <div className="inline-block animate-spin rounded-full h-12 w-12 border-2 border-[#D4AF37] border-t-transparent" />
+              <div className="vf-serif text-2xl text-slate-100 mt-8">
+                {doc.language === "ar"
+                  ? "جارٍ توليد مادتك الحيوية…"
+                  : "Génération de votre livrable vitaliste en cours…"}
+              </div>
+              <p className="text-slate-400 mt-3 max-w-md mx-auto leading-relaxed">
+                {doc.language === "ar"
+                  ? "العملية تتم في الخلفية. يمكنك مغادرة الصفحة والعودة لاحقًا — ستجد المادة في مكتبتك. الزمن المتوقع: 30-90 ثانية."
+                  : "Le traitement s'effectue en arrière-plan. Vous pouvez fermer cette page et revenir plus tard — le livrable sera dans votre bibliothèque. Temps estimé : 30 à 90 secondes."}
+              </p>
+            </div>
+          ) : doc.status === "failed" ? (
+            <div className="py-16 text-center" data-testid="preview-failed">
+              <div className="vf-serif text-2xl text-red-300">
+                {doc.language === "ar" ? "فشل التوليد" : "Génération échouée"}
+              </div>
+              <p className="text-slate-400 mt-3 max-w-md mx-auto">
+                {doc.error_detail || "Erreur inconnue."}
+              </p>
+              <p className="text-slate-500 mt-2 text-xs">
+                Vérifiez le moteur IA dans <code>/admin → Moteurs IA</code> ou
+                rechargez votre crédit auprès du provider.
+              </p>
+            </div>
+          ) : (
+            <div className="vf-prose relative z-0"
+              dir={doc.language === "ar" ? "rtl" : "ltr"}
+              lang={doc.language || "fr"}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(doc.content) }}
+              data-testid="preview-content" />
+          )}
         </article>
 
         <aside className="space-y-4">
