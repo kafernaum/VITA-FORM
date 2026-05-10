@@ -1,54 +1,57 @@
-import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { Toaster } from "sonner";
+import Navbar from "@/components/Navbar";
+import Landing from "@/pages/Landing";
+import Auth from "@/pages/Auth";
+import Theorie from "@/pages/Theorie";
+import Generator from "@/pages/Generator";
+import Preview from "@/pages/Preview";
+import Library from "@/pages/Library";
+import Analyse from "@/pages/Analyse";
+import Auteur from "@/pages/Auteur";
+import Admin from "@/pages/Admin";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+function ProtectedRoute({ children, adminOnly = false }) {
+  const { user } = useAuth();
+  const loc = useLocation();
+  if (!user) return <Navigate to={`/auth?next=${encodeURIComponent(loc.pathname)}`} replace />;
+  if (adminOnly && user.role !== "admin") return <Navigate to="/" replace />;
+  return children;
+}
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function Shell({ children }) {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+    <div className="vf-page vf-grain relative">
+      <Navbar />
+      <main className="pt-20 relative z-10">{children}</main>
+      <footer className="border-t border-white/5 mt-24 py-10 text-center text-xs text-slate-500">
+        <div className="vf-mono tracking-[0.3em]">VITA-FORM · DOCTRINA VITALIS</div>
+        <div className="mt-2">© {new Date().getFullYear()} — Théorie Vitaliste des Finances Publiques · Pr. Ahmed ELY Mustapha</div>
+      </footer>
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Toaster position="top-right" theme="dark" richColors />
+        <Routes>
+          <Route path="/" element={<Shell><Landing /></Shell>} />
+          <Route path="/auth" element={<Shell><Auth /></Shell>} />
+          <Route path="/theorie" element={<Shell><Theorie /></Shell>} />
+          <Route path="/auteur" element={<Shell><Auteur /></Shell>} />
+          <Route path="/generator" element={<Shell><ProtectedRoute><Generator /></ProtectedRoute></Shell>} />
+          <Route path="/analyse" element={<Shell><ProtectedRoute><Analyse /></ProtectedRoute></Shell>} />
+          <Route path="/library" element={<Shell><ProtectedRoute><Library /></ProtectedRoute></Shell>} />
+          <Route path="/preview/:id" element={<Shell><ProtectedRoute><Preview /></ProtectedRoute></Shell>} />
+          <Route path="/admin" element={<Shell><ProtectedRoute adminOnly><Admin /></ProtectedRoute></Shell>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
