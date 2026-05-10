@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Crown, Trash2, Plus, Users2, FileSignature, BadgeDollarSign, Building2 } from "lucide-react";
+import { Crown, Trash2, Plus, Users2, FileSignature, BadgeDollarSign,
+         Building2, Landmark, BarChart3, Check, X } from "lucide-react";
 
 export default function Admin() {
   const [tab, setTab] = useState("users");
@@ -10,8 +11,15 @@ export default function Admin() {
   const [generations, setGenerations] = useState([]);
   const [institutions, setInstitutions] = useState([]);
   const [jurisprudences, setJurisprudences] = useState([]);
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [pendingPayments, setPendingPayments] = useState([]);
+  const [revenue, setRevenue] = useState({ by_currency: {}, by_month: [], transactions_total: 0 });
   const [newInst, setNewInst] = useState({ name: "", country: "France", country_code: "FR", city: "", type: "ENA" });
   const [newJur, setNewJur] = useState({ title: "", country: "France", reference: "", body: "", tags: "" });
+  const [newBank, setNewBank] = useState({
+    holder_name: "", bank_name: "", iban: "", bic: "",
+    currency: "EUR", country: "France", instructions: "", is_active: true,
+  });
 
   const refresh = () => {
     api.get("/admin/stats").then((r) => setStats(r.data));
@@ -19,6 +27,9 @@ export default function Admin() {
     api.get("/admin/generations").then((r) => setGenerations(r.data));
     api.get("/institutions").then((r) => setInstitutions(r.data));
     api.get("/jurisprudences", { params: { limit: 100 } }).then((r) => setJurisprudences(r.data));
+    api.get("/admin/bank-accounts").then((r) => setBankAccounts(r.data));
+    api.get("/admin/payments/pending").then((r) => setPendingPayments(r.data));
+    api.get("/admin/revenue").then((r) => setRevenue(r.data));
   };
   useEffect(refresh, []);
 
@@ -65,6 +76,47 @@ export default function Admin() {
     refresh();
   };
 
+  const addBank = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/admin/bank-accounts", newBank);
+      toast.success("Compte bancaire ajouté.");
+      setNewBank({ holder_name: "", bank_name: "", iban: "", bic: "", currency: "EUR",
+                    country: "France", instructions: "", is_active: true });
+      refresh();
+    } catch { toast.error("Échec création."); }
+  };
+  const toggleBankActive = async (b) => {
+    try {
+      await api.patch(`/admin/bank-accounts/${b.id}`, { ...b, is_active: !b.is_active });
+      toast.success(b.is_active ? "Désactivé." : "Activé.");
+      refresh();
+    } catch { toast.error("Échec MAJ."); }
+  };
+  const removeBank = async (id) => {
+    if (!window.confirm("Supprimer ce compte ?")) return;
+    await api.delete(`/admin/bank-accounts/${id}`);
+    toast.success("Supprimé.");
+    refresh();
+  };
+  const validateWire = async (txn_id) => {
+    if (!window.confirm("Confirmer la réception du virement ? Le livrable sera débloqué et l'apprenant notifié par email.")) return;
+    try {
+      await api.post(`/admin/payments/${txn_id}/validate`);
+      toast.success("Virement validé. Livrable débloqué.");
+      refresh();
+    } catch { toast.error("Échec validation."); }
+  };
+  const rejectWire = async (txn_id) => {
+    const reason = window.prompt("Motif de rejet ?", "");
+    if (reason === null) return;
+    try {
+      await api.post(`/admin/payments/${txn_id}/reject?reason=${encodeURIComponent(reason)}`);
+      toast.success("Rejeté.");
+      refresh();
+    } catch { toast.error("Échec rejet."); }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
       <span className="vf-tag">Tableau de bord SuperAdmin</span>
@@ -95,6 +147,9 @@ export default function Admin() {
           { k: "generations", l: "Livrables" },
           { k: "institutions", l: "Institutions" },
           { k: "jurisprudences", l: "Jurisprudences" },
+          { k: "banks", l: "Comptes bancaires" },
+          { k: "pending", l: `Virements en attente${pendingPayments.length ? ` (${pendingPayments.length})` : ""}` },
+          { k: "revenue", l: "Recettes" },
         ].map((t) => (
           <button
             key={t.k} onClick={() => setTab(t.k)}
@@ -263,6 +318,194 @@ export default function Admin() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+      {tab === "banks" && (
+        <div className="grid lg:grid-cols-3 gap-6 mt-6">
+          <form onSubmit={addBank} className="vf-card p-6 space-y-3" data-testid="admin-add-bank">
+            <div className="vf-serif text-xl text-slate-50 flex items-center gap-2">
+              <Landmark className="w-5 h-5 text-[#D4AF37]" /> Ajouter un compte
+            </div>
+            <input required placeholder="Nom du titulaire" value={newBank.holder_name}
+              onChange={(e) => setNewBank({ ...newBank, holder_name: e.target.value })}
+              className="vf-input w-full px-3 py-2.5" data-testid="bank-holder" />
+            <input required placeholder="Nom de la banque" value={newBank.bank_name}
+              onChange={(e) => setNewBank({ ...newBank, bank_name: e.target.value })}
+              className="vf-input w-full px-3 py-2.5" data-testid="bank-name" />
+            <input required placeholder="IBAN" value={newBank.iban}
+              onChange={(e) => setNewBank({ ...newBank, iban: e.target.value })}
+              className="vf-input w-full px-3 py-2.5 vf-mono" data-testid="bank-iban" />
+            <input placeholder="BIC / SWIFT" value={newBank.bic}
+              onChange={(e) => setNewBank({ ...newBank, bic: e.target.value })}
+              className="vf-input w-full px-3 py-2.5 vf-mono" data-testid="bank-bic" />
+            <div className="grid grid-cols-2 gap-2">
+              <select value={newBank.currency}
+                onChange={(e) => setNewBank({ ...newBank, currency: e.target.value })}
+                className="vf-input px-3 py-2.5">
+                {["EUR","USD","GBP","CAD","CHF","AUD","MAD","TND","DZD"].map((c) =>
+                  <option key={c}>{c}</option>)}
+              </select>
+              <input placeholder="Pays" value={newBank.country}
+                onChange={(e) => setNewBank({ ...newBank, country: e.target.value })}
+                className="vf-input px-3 py-2.5" />
+            </div>
+            <textarea rows={2} placeholder="Instructions complémentaires (facultatif)"
+              value={newBank.instructions}
+              onChange={(e) => setNewBank({ ...newBank, instructions: e.target.value })}
+              className="vf-input w-full px-3 py-2.5 resize-y text-sm" />
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input type="checkbox" checked={newBank.is_active}
+                onChange={(e) => setNewBank({ ...newBank, is_active: e.target.checked })}
+                className="accent-[#D4AF37]" />
+              Compte actif (proposé aux apprenants)
+            </label>
+            <button type="submit" className="vf-btn-primary w-full inline-flex items-center justify-center gap-2"
+              data-testid="bank-add-submit">
+              <Plus className="w-4 h-4" /> Ajouter le compte
+            </button>
+          </form>
+
+          <div className="lg:col-span-2 vf-card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[#0F1730] text-[#D4AF37]">
+                <tr><th className="text-left p-3">Banque / Titulaire</th><th>IBAN</th><th>BIC</th>
+                  <th>Devise</th><th>Actif</th><th></th></tr>
+              </thead>
+              <tbody>
+                {bankAccounts.length === 0 && (
+                  <tr><td colSpan={6} className="p-6 text-center text-slate-500">
+                    Aucun compte bancaire enregistré.
+                  </td></tr>
+                )}
+                {bankAccounts.map((b) => (
+                  <tr key={b.id} className="border-t border-[#1E293B]" data-testid={`admin-bank-${b.id}`}>
+                    <td className="p-3">
+                      <div className="text-slate-100">{b.bank_name}</div>
+                      <div className="text-xs text-slate-500">{b.holder_name}</div>
+                    </td>
+                    <td className="vf-mono text-xs text-slate-300">{b.iban}</td>
+                    <td className="vf-mono text-xs text-slate-300">{b.bic || "—"}</td>
+                    <td className="text-center text-slate-300">{b.currency}</td>
+                    <td className="text-center">
+                      <button onClick={() => toggleBankActive(b)}
+                        data-testid={`bank-toggle-${b.id}`}
+                        className={`text-xs px-2 py-1 border ${b.is_active
+                          ? "border-emerald-500 text-emerald-400"
+                          : "border-slate-600 text-slate-500"}`}>
+                        {b.is_active ? "ACTIF" : "INACTIF"}
+                      </button>
+                    </td>
+                    <td className="text-center">
+                      <button onClick={() => removeBank(b.id)}
+                        data-testid={`bank-del-${b.id}`}
+                        className="text-red-400 hover:text-red-300">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "pending" && (
+        <div className="vf-card mt-6 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[#0F1730] text-[#D4AF37]">
+              <tr><th className="text-left p-3">Référence VITA</th><th>Apprenant</th><th>Livrable</th>
+                <th>Montant</th><th>Statut</th><th>Émetteur déclaré</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {pendingPayments.length === 0 && (
+                <tr><td colSpan={7} className="p-6 text-center text-slate-500">
+                  Aucun virement en attente.
+                </td></tr>
+              )}
+              {pendingPayments.map((p) => (
+                <tr key={p.id} className="border-t border-[#1E293B]" data-testid={`pending-${p.id}`}>
+                  <td className="p-3 vf-mono text-xs text-[#D4AF37]">{p.wire_reference || "—"}</td>
+                  <td className="text-slate-300 text-xs">{p.user_email}</td>
+                  <td className="text-slate-200">{p.generation_topic}</td>
+                  <td className="text-slate-100 vf-mono">
+                    {p.amount?.toFixed(2)} {p.currency}
+                  </td>
+                  <td className="text-center text-xs">
+                    {p.status === "wire_declared"
+                      ? <span className="text-amber-300">DÉCLARÉ</span>
+                      : <span className="text-slate-500">AWAITING</span>}
+                  </td>
+                  <td className="text-slate-300 text-xs">
+                    {p.wire_sender_name || "—"}<br/>
+                    <span className="text-slate-500">{p.wire_user_reference || ""}</span>
+                  </td>
+                  <td className="text-center">
+                    <button onClick={() => validateWire(p.id)}
+                      data-testid={`pending-validate-${p.id}`}
+                      className="text-emerald-400 hover:text-emerald-300 mr-2">
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => rejectWire(p.id)}
+                      data-testid={`pending-reject-${p.id}`}
+                      className="text-red-400 hover:text-red-300">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === "revenue" && (
+        <div className="space-y-6 mt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {Object.entries(revenue.by_currency).map(([cur, v]) => (
+              <div key={cur} className="vf-card p-5" data-testid={`revenue-${cur}`}>
+                <div className="vf-mono text-[0.65rem] tracking-[0.25em] text-[#D4AF37]/80">{cur}</div>
+                <div className="vf-serif text-3xl text-slate-50 mt-2">
+                  {cur === "JPY" ? v.total : v.total.toFixed(2)} <span className="text-base text-slate-400">{cur}</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-1">{v.count} paiement{v.count > 1 ? "s" : ""}</div>
+              </div>
+            ))}
+            {Object.keys(revenue.by_currency).length === 0 && (
+              <div className="vf-card p-8 col-span-full text-center text-slate-400">
+                Aucune recette enregistrée pour le moment.
+              </div>
+            )}
+          </div>
+
+          <div className="vf-card p-6">
+            <div className="vf-serif text-xl text-slate-50 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-[#D4AF37]" /> Détail mensuel
+            </div>
+            <div className="mt-4 space-y-4">
+              {revenue.by_month.map((m) => (
+                <div key={m.month}>
+                  <div className="vf-mono text-xs text-[#D4AF37] mb-2">{m.month}</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    {m.rows.map((r, i) => (
+                      <div key={i} className="border border-[#1E293B] p-3 text-sm">
+                        <div className="text-slate-200">
+                          <span className="text-[#F3E5AB]">{r.method.toUpperCase()}</span> · {r.currency}
+                        </div>
+                        <div className="vf-serif text-xl text-slate-50">
+                          {r.currency === "JPY" ? r.total : r.total.toFixed(2)}
+                        </div>
+                        <div className="text-xs text-slate-500">{r.count} paiement{r.count > 1 ? "s" : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {revenue.by_month.length === 0 && (
+                <p className="text-slate-500 text-sm">Aucune transaction confirmée pour l'instant.</p>
+              )}
+            </div>
           </div>
         </div>
       )}

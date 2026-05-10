@@ -1,0 +1,40 @@
+{
+  "summary": "VITA-FORM iteration 7 — wire transfer + bank accounts CRUD + revenue dashboard validation. Backend: 16/16 wire tests PASS + 16/16 PayPal regression PASS (32/32 total). Frontend smoke: /admin shows all 7 tabs (Utilisateurs/Livrables/Institutions/Jurisprudences/Comptes bancaires/Virements en attente/Recettes); 'Comptes bancaires' tab renders admin-add-bank form with all fields (holder/name/iban/bic/submit); 'Recettes' tab shows 'Aucune recette' fallback (post-cleanup) plus monthly detail card. Paywall flow: non-VIP user lands on /preview/{gen_id}, dialog opens with both PayPal/Virement tabs, switching to Virement shows wire-bank-select with seeded EUR bank, clicking 'Obtenir une référence' issues POST /api/payments/wire/initiate and renders step 2 with VF-XXXXXXXX (verified VF-329F43FC, len=11), wire-sender-input, wire-bankref-input, and 'J'ai effectué le virement' button. Backend covers: BankAccount CRUD + IBAN-space-strip + currency-uppercase, /bank-accounts active-only filter, wire/initiate (success EUR=14.90, 404 inactive bank, 403 cross-user), wire/confirm + admin/payments/pending listing wire_declared rows with sender_name/user_reference/generation_topic, admin/validate (flips paid=true on generation, idempotent already_paid, blocks subsequent confirm with 400 'Déjà validé'), admin/reject (status=rejected with reason persisted), admin/revenue (by_currency aggregates EUR>=14.90, by_month list, transactions_total>=1), 403 enforcement on every /admin/* path for non-admin users, PayPal regression (checkout still returns _xclick URL with EUR=14.90).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dialog paywall + Generator (cosmetic, pre-existing)", "issues": ["React hydration warning '<span> cannot be a child of <option>' caused by Emergent preview's x-ve-dynamic injection on <option> in Preview.jsx line 285 (wire-bank-select) and Generator.jsx line 155 (institutions select). Same warning was already noted in iteration 4 for Generator. Cosmetic only — selects work. Originates from preview tooling, not app code."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_wire_flow.py",
+    "/app/backend/tests/test_paypal_flow.py",
+    "/app/test_reports/pytest/iteration_5_wire.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1203 lines — splitting into routers (auth, payments, generations, sources, jurisprudences, admin, banks) is overdue for maintainability.",
+    "BankAccountIn / WireInitiateIn / WireConfirmIn use Pydantic Field min_length validators — good. Currency upper-cased + IBAN/BIC space-stripped server-side — defense-in-depth even if frontend forgets.",
+    "PATCH /admin/bank-accounts/{id} re-uses BankAccountIn (full payload required). For partial update support, a separate BankAccountPatchIn with Optional fields would be more REST-idiomatic, but current contract is acceptable for an admin form.",
+    "wire_initiate amount is computed from PAYPAL_PRICES[currency]; if frontend posts a currency NOT in dict, it silently falls back to PAYWALL_PRICE (EUR 14.90) but stores the requested currency code. Consider rejecting unknown currencies with 400 like /payments/checkout does (test_checkout_invalid_currency exists for PayPal).",
+    "wire_confirm correctly blocks double-validation (HTTP 400 'Déjà validé') after admin marks paid; status transitions: awaiting_wire → wire_declared → complete (or rejected).",
+    "admin_validate is idempotent (returns {status:'already_paid'} on re-call) and the email send uses _send_payment_email already wrapped non-blocking — good.",
+    "admin_reject does NOT flip payment_status (only status=rejected). Could be intentional (allow user to retry). Behavior is consistent across calls.",
+    "admin_revenue: pipeline is defined twice — first definition is unused (overwritten on line 1015). Cosmetic, but should be removed for clarity (lines 1000-1012 dead code).",
+    "admin_revenue groups by 'updated_at' substring [0,7] = YYYY-MM. Works for ISO strings stored as text. Good.",
+    "GET /api/bank-accounts requires auth (Depends(get_current_user)). Spec wording said 'public for users' but implementation is auth-gated; acceptable since the paywall requires a logged-in user anyway.",
+    "All new endpoints exclude _id ({'_id': 0}) in projections — MongoDB serialization safe.",
+    "Frontend Preview.jsx wire flow is well-componentized; CopyField provides UX for IBAN/BIC. Step-2 reference is rendered with vf-mono so user can copy the VF-XXXXXXXX easily.",
+    "Pre-existing: <span> child of <option> hydration warning is caused by Emergent x-ve-dynamic injection — not a code bug, but consider documenting in README so future iterations don't chase it."
+  ],
+  "updated_files": ["/app/backend/tests/test_wire_flow.py"],
+  "success_rate": {"backend": "100% (32/32: 16 wire + 16 paypal regression)", "frontend": "100% smoke"},
+  "test_credentials": "admin@vita-form.com / VitaForm2026!Admin (seeded). Test users TEST_user_<uuid>@vita-form.com (TestWire2026!) and TEST_paywall_<uuid>@vita-form.com (TestPaywall2026!) created/destroyed per test session. All test bank accounts (TEST holder_name) deleted post-run.",
+  "seed_data_creation": "Created via fixtures: 2 bank accounts (1 active EUR FR76..., 1 inactive DE89...), 2 non-VIP users, 1 unpaid generation. UI smoke also seeded TEST UI VITA-FORM bank + a non-VIP paywall user + an unpaid TEST_GEN_UI_* generation. All cleaned up at end (manual db cleanup post-UI run: 1 generation + 1 bank deleted).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Wire flow is fully wired end-to-end. Backend at https://formation-finances.preview.emergentagent.com is healthy and all 32 backend tests reproducible via `pytest /app/backend/tests/ -v`. Run wire tests: `pytest /app/backend/tests/test_wire_flow.py -v`. Admin can create/list/patch/delete bank accounts; users see only is_active=true ones via /api/bank-accounts. Wire reference format VF-<8upper> (total length 11). Wire flow does NOT auto-unlock — admin must POST /admin/payments/{txn_id}/validate. Frontend testids: admin-tab-{users|generations|institutions|jurisprudences|banks|pending|revenue}, admin-add-bank, bank-{holder|name|iban|bic|add-submit}, tab-{paypal|wire}, wire-{bank-select|initiate-btn|ref-display|sender-input|bankref-input|confirm-btn|iban|bic}, paywall-{currency-EUR|amount|confirm}, pending-{validate|reject}-{id}, revenue-{currency}. PAYPAL_PRICES dict is shared between PayPal and wire so amount grid matches. Pre-existing hydration warning on <option> elements is from Emergent preview tooling.",
+  "rca of the issue": "No bugs found. Wire transfer + bank accounts admin CRUD + revenue dashboard implementation is correct and matches the iteration 7 spec. Minor code-cleanliness items: (1) duplicate aggregation pipeline definition in admin_revenue (lines 1000-1012 dead code), (2) wire_initiate silently accepts unknown currencies (falls back to PAYWALL_PRICE) where it should 400 like PayPal does. Neither blocks the feature."
+}

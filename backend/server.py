@@ -179,6 +179,29 @@ class JurisprudenceIn(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class BankAccountIn(BaseModel):
+    holder_name: str = Field(min_length=2)
+    bank_name: str = Field(min_length=2)
+    iban: str = Field(min_length=10)
+    bic: Optional[str] = ""
+    currency: str = "EUR"
+    country: str = "France"
+    instructions: Optional[str] = ""
+    is_active: bool = True
+
+
+class WireInitiateIn(BaseModel):
+    generation_id: str
+    bank_account_id: str
+    currency: str = "EUR"
+
+
+class WireConfirmIn(BaseModel):
+    reference: str = Field(min_length=2)
+    sender_name: str = Field(min_length=2)
+    sender_note: Optional[str] = ""
+
+
 class PayPalCheckoutIn(BaseModel):
     generation_id: str
     origin_url: str
@@ -784,6 +807,249 @@ async def admin_delete_institution(inst_id: str, _: dict = Depends(require_admin
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Institution introuvable.")
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Comptes bancaires & virements (paiement alternatif)
+# ---------------------------------------------------------------------------
+@api.get("/bank-accounts")
+async def list_active_bank_accounts(_: dict = Depends(get_current_user)):
+    items = await db.bank_accounts.find(
+        {"is_active": True}, {"_id": 0}
+    ).sort("currency", 1).to_list(50)
+    return items
+
+
+@api.post("/admin/bank-accounts")
+async def admin_create_bank_account(payload: BankAccountIn,
+                                     _: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "iban": payload.iban.replace(" ", "").upper(),
+        "bic": (payload.bic or "").replace(" ", "").upper(),
+        "currency": payload.currency.upper(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.bank_accounts.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/admin/bank-accounts")
+async def admin_list_bank_accounts(_: dict = Depends(require_admin)):
+    items = await db.bank_accounts.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.patch("/admin/bank-accounts/{acct_id}")
+async def admin_update_bank_account(acct_id: str, payload: BankAccountIn,
+                                     _: dict = Depends(require_admin)):
+    update = {**payload.model_dump(),
+              "iban": payload.iban.replace(" ", "").upper(),
+              "bic": (payload.bic or "").replace(" ", "").upper(),
+              "currency": payload.currency.upper()}
+    res = await db.bank_accounts.update_one({"id": acct_id}, {"$set": update})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Compte introuvable.")
+    doc = await db.bank_accounts.find_one({"id": acct_id}, {"_id": 0})
+    return doc
+
+
+@api.delete("/admin/bank-accounts/{acct_id}")
+async def admin_delete_bank_account(acct_id: str, _: dict = Depends(require_admin)):
+    res = await db.bank_accounts.delete_one({"id": acct_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Compte introuvable.")
+    return {"status": "ok"}
+
+
+@api.post("/payments/wire/initiate")
+async def wire_initiate(payload: WireInitiateIn,
+                        user: dict = Depends(get_current_user)):
+    gen = await db.generations.find_one({"id": payload.generation_id}, {"_id": 0})
+    if not gen:
+        raise HTTPException(status_code=404, detail="Livrable introuvable.")
+    if gen["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Accès refusé.")
+    bank = await db.bank_accounts.find_one(
+        {"id": payload.bank_account_id, "is_active": True}, {"_id": 0})
+    if not bank:
+        raise HTTPException(status_code=404, detail="Compte bancaire indisponible.")
+
+    currency = payload.currency.upper()
+    amount = PAYPAL_PRICES.get(currency, PAYWALL_PRICE)
+    txn_id = str(uuid.uuid4())
+    short_ref = f"VF-{txn_id[:8].upper()}"
+
+    await db.payment_transactions.insert_one({
+        "id": txn_id,
+        "session_id": txn_id,
+        "provider": "wire",
+        "method": "wire",
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "generation_id": payload.generation_id,
+        "amount": amount,
+        "currency": currency,
+        "bank_account_id": payload.bank_account_id,
+        "wire_reference": short_ref,
+        "status": "awaiting_wire",
+        "payment_status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {
+        "txn_id": txn_id,
+        "wire_reference": short_ref,
+        "amount": amount,
+        "currency": currency,
+        "bank_account": bank,
+        "instructions": (
+            f"Virement à effectuer pour {amount:.2f} {currency} "
+            f"sur le compte ci-dessus en mentionnant impérativement la référence "
+            f"{short_ref} dans le libellé. Une fois le virement émis, "
+            "confirmez-le ici pour que l'administrateur valide votre déblocage."
+        ),
+    }
+
+
+@api.post("/payments/wire/{txn_id}/confirm")
+async def wire_confirm(txn_id: str, payload: WireConfirmIn,
+                        user: dict = Depends(get_current_user)):
+    txn = await db.payment_transactions.find_one({"id": txn_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction introuvable.")
+    if txn["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Accès refusé.")
+    if txn.get("provider") != "wire":
+        raise HTTPException(status_code=400, detail="Cette transaction n'est pas un virement.")
+    if txn.get("payment_status") == "paid":
+        raise HTTPException(status_code=400, detail="Déjà validé.")
+
+    await db.payment_transactions.update_one(
+        {"id": txn_id},
+        {"$set": {
+            "status": "wire_declared",
+            "wire_user_reference": payload.reference,
+            "wire_sender_name": payload.sender_name,
+            "wire_sender_note": payload.sender_note,
+            "wire_declared_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    return {"status": "declared", "txn_id": txn_id,
+            "message": "Déclaration enregistrée. L'administrateur validera sous 24-72h."}
+
+
+@api.get("/admin/payments/pending")
+async def admin_pending_payments(_: dict = Depends(require_admin)):
+    rows = await db.payment_transactions.find(
+        {"provider": "wire", "payment_status": "pending"},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+    # Enrichir avec topic et email
+    for r in rows:
+        gen = await db.generations.find_one({"id": r["generation_id"]},
+                                              {"_id": 0, "topic": 1})
+        r["generation_topic"] = (gen or {}).get("topic", "—")
+    return rows
+
+
+@api.post("/admin/payments/{txn_id}/validate")
+async def admin_validate_wire(txn_id: str, _: dict = Depends(require_admin)):
+    txn = await db.payment_transactions.find_one({"id": txn_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction introuvable.")
+    if txn.get("payment_status") == "paid":
+        return {"status": "already_paid"}
+    await db.payment_transactions.update_one(
+        {"id": txn_id},
+        {"$set": {"payment_status": "paid", "status": "complete",
+                  "validated_at": datetime.now(timezone.utc).isoformat(),
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await db.generations.update_one(
+        {"id": txn["generation_id"]},
+        {"$set": {"paid": True,
+                  "paid_at": datetime.now(timezone.utc).isoformat(),
+                  "payment_txn_id": txn_id}},
+    )
+    await _send_payment_email(txn["generation_id"], txn.get("user_email"))
+    return {"status": "validated"}
+
+
+@api.post("/admin/payments/{txn_id}/reject")
+async def admin_reject_wire(txn_id: str, reason: str = "",
+                              _: dict = Depends(require_admin)):
+    res = await db.payment_transactions.update_one(
+        {"id": txn_id},
+        {"$set": {"status": "rejected", "rejection_reason": reason,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Transaction introuvable.")
+    return {"status": "rejected"}
+
+
+# ---------------------------------------------------------------------------
+# Tableau de bord recettes (admin)
+# ---------------------------------------------------------------------------
+@api.get("/admin/revenue")
+async def admin_revenue(_: dict = Depends(require_admin)):
+    pipeline = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {
+            "_id": {
+                "month": {"$substr": ["$paid_at", 0, 7]},
+                "currency": "$currency",
+                "method": {"$ifNull": ["$method", "$provider"]},
+            },
+            "count": {"$sum": 1},
+            "total": {"$sum": "$amount"},
+        }},
+        {"$sort": {"_id.month": -1}},
+    ]
+    # paid_at is on the generations doc; payment_transactions has updated_at when paid.
+    # Use updated_at instead.
+    pipeline = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {
+            "_id": {
+                "month": {"$substr": ["$updated_at", 0, 7]},
+                "currency": "$currency",
+                "method": {"$ifNull": ["$method", "$provider"]},
+            },
+            "count": {"$sum": 1},
+            "total": {"$sum": "$amount"},
+        }},
+        {"$sort": {"_id.month": -1}},
+    ]
+    rows = await db.payment_transactions.aggregate(pipeline).to_list(500)
+
+    # Total cumulé par devise
+    by_currency: dict = {}
+    by_month: dict = {}
+    for r in rows:
+        cur = r["_id"]["currency"]
+        mo = r["_id"]["month"]
+        by_currency.setdefault(cur, {"count": 0, "total": 0.0})
+        by_currency[cur]["count"] += r["count"]
+        by_currency[cur]["total"] += r["total"]
+        by_month.setdefault(mo, [])
+        by_month[mo].append({
+            "currency": cur,
+            "method": r["_id"].get("method", "?"),
+            "count": r["count"],
+            "total": round(r["total"], 2),
+        })
+
+    return {
+        "by_currency": {c: {"count": v["count"], "total": round(v["total"], 2)}
+                         for c, v in by_currency.items()},
+        "by_month": [{"month": m, "rows": rows_} for m, rows_ in sorted(by_month.items(), reverse=True)],
+        "transactions_total": await db.payment_transactions.count_documents({"payment_status": "paid"}),
+    }
 
 
 # ---------------------------------------------------------------------------
