@@ -184,7 +184,9 @@ export default function Generator() {
                   className="vf-input w-full mt-2 px-3 py-3">
                   <option value="fr">Français</option>
                   <option value="ar" disabled={!arabicAvailable}>
-                    العربية (arabe) {arabicAvailable ? "" : "— pays MENA uniquement"}
+                    {arabicAvailable
+                      ? "العربية (arabe)"
+                      : "العربية (arabe) — pays MENA uniquement"}
                   </option>
                 </select>
               </div>
