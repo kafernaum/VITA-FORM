@@ -1,0 +1,104 @@
+{
+  "theme": "Dark",
+  "archetype": "5 (Jewel & Luxury - Dark Academia Variant)",
+  "emotional_tone": "Gravité académique, profondeur philosophique, autorité doctorale, premium EdTech.",
+  "colors": {
+    "background": "#0A1128",
+    "surface": "#131B33",
+    "surface_glass": "bg-[#0A1128]/70 backdrop-blur-xl border border-white/10",
+    "primary": "#D4AF37",
+    "primary_hover": "#F3E5AB",
+    "secondary": "#556B2F",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "accent_linkedin_blue": "#0A66C2",
+    "accent_linkedin_green": "#057642",
+    "border_subtle": "#1E293B",
+    "danger": "#EF4444"
+  },
+  "typography": {
+    "heading_font": "Cormorant Garamond",
+    "body_font": "Outfit",
+    "mono_font": "JetBrains Mono",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tight font-serif text-slate-50",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-serif text-slate-100",
+      "h3": "text-xl sm:text-2xl font-serif text-slate-200",
+      "body": "text-base text-slate-300 font-sans leading-relaxed",
+      "small": "text-sm text-slate-400 font-sans",
+      "data_labels": "text-xs uppercase tracking-[0.2em] font-mono text-[#D4AF37]/80"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous Spacing (p-8, p-12). Layout must feel like an open manuscript or high-end museum gallery. Use wide margins.",
+    "container_padding": "px-6 md:px-12 lg:px-24",
+    "bento_grid": "Grid Layout Technical Rules: Subgrid support for complex cards. Deep shadows, subtle golden borders for highlights."
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#D4AF37] text-[#0A1128] font-semibold hover:bg-[#F3E5AB] transition-colors rounded-sm border border-[#D4AF37]",
+      "secondary": "bg-transparent text-[#D4AF37] border border-[#D4AF37] hover:bg-[#D4AF37]/10 transition-colors rounded-sm"
+    },
+    "cards": {
+      "style": "Flat solid surfaces with sharp edges (max rounded-sm). Dark surfaces (bg-[#131B33]) with 1px border of border-[#1E293B] or border-[#D4AF37]/20. No heavy glassmorphism for data to keep it readable.",
+      "hover": "-translate-y-1 shadow-2xl shadow-[#D4AF37]/10 border-[#D4AF37]/50"
+    },
+    "vitalist_calculator": {
+      "style": "Retro-Futurism/Control Room hybrid. Monospace typography for numbers. Gold glowing text for the 'Confiscated Life Time' result to emphasize gravity."
+    }
+  },
+  "media": {
+    "images": [
+      {
+        "category": "hero_background",
+        "url": "https://static.prod-images.emergentagent.com/jobs/4b295bcf-9dab-41b7-9ef2-697a4cc68804/images/dfee9d619947d858dfba8ae4355dc9d54c287319ee2f84910a031effc188d37c.png",
+        "description": "Abstract deep midnight blue background with subtle golden dust particles"
+      },
+      {
+        "category": "texture_overlay",
+        "url": "https://static.prod-images.emergentagent.com/jobs/4b295bcf-9dab-41b7-9ef2-697a4cc68804/images/b5a1bf3e11c82c337c810467291e390337815378434bdf339ea1f8736c3f31b9.png",
+        "description": "Dark blue premium leather texture with gold accents for specific sections"
+      },
+      {
+        "category": "book_cover",
+        "url": "https://customer-assets.emergentagent.com/job_4b295bcf-9dab-41b7-9ef2-697a4cc68804/artifacts/42tc58ej_RECTO%20HAUTE%20RESOLUTION.png",
+        "description": "Cover of the book Finances Publiques - Une Nouvelle Théorie"
+      },
+      {
+        "category": "vitalist_infographic",
+        "url": "https://customer-assets.emergentagent.com/job_4b295bcf-9dab-41b7-9ef2-697a4cc68804/artifacts/bkrdomo4_affiche-fr.png",
+        "description": "Infographic of the Vitalist Theory"
+      },
+      {
+        "category": "author_photo",
+        "url": "https://customer-assets.emergentagent.com/job_4b295bcf-9dab-41b7-9ef2-697a4cc68804/artifacts/wrvl79bo_past-forward-1950s%20%283%29.jpg",
+        "description": "Professional B&W photo of Prof. Ahmed ELY Mustapha"
+      }
+    ],
+    "icons": {
+      "library": "lucide-react",
+      "strategy": "Use classic/academic metaphors: library, scale (justice), hourglass, graduation cap."
+    }
+  },
+  "accessibility": {
+    "contrast": "Ensure text over dark backgrounds meets APCA standards. Use text shadow on hero.",
+    "focus": "focus:ring-2 focus:ring-[#D4AF37] focus:outline-none",
+    "data_testid": "MANDATORY on all interactive elements using kebab-case role-based naming (e.g., data-testid='login-button', data-testid='vitalist-calculate-btn')."
+  },
+  "motion": {
+    "transitions": "Slow, deliberate transitions (0.3s ease) to convey gravity and weight. No bouncy or playful animations.",
+    "hover": "Subtle glow or 1px border highlight for interactive elements."
+  },
+  "instructions_to_main_agent": [
+    "1. Setup complete French localization (all UI text must be in French).",
+    "2. Use a Dark theme exclusively. The background should be a deep night blue (#0A1128), not pure black.",
+    "3. Implement the Navigation Bar with a Crystal Glass effect (bg-[#0A1128]/70 backdrop-blur-xl border-b border-white/10) so it works over the hero image.",
+    "4. Construct the Landing Page Hero using 'hero_background' as the background image (with bg-[#0A1128]/40 overlay to ensure text visibility). Use Cormorant Garamond for the large H1.",
+    "5. For the 'Module Analyse Vitaliste' (Vitalist Calculator), use 'Control Room' styling. Form inputs should be sharp (Shadcn Input with rounded-sm, bg-[#131B33] border-[#1E293B]), and the result (Temps de vie confisqué) should be displayed large with JetBrains Mono font and gold text (#D4AF37).",
+    "6. Build the '/auteur' page featuring the 'author_photo' alongside his biography and LinkedIn buttons colored in blue (#0A66C2) for penal consultant and green (#057642) for professor roles.",
+    "7. Include the 'book_cover' and 'vitalist_infographic' in the educational sections of the homepage.",
+    "8. Use Shadcn components for complex interactions (Dropdowns for institution selection, Tables for admin dashboard, Dialogs for paywall/watermark preview). Override their default radii to be sharper (rounded-sm) and borders to be slate-800 or gold/20.",
+    "9. DO NOT USE placeholder image URLs. Only use the media URLs provided in this JSON.",
+    "10. Remember to add data-testid to every clickable element."
+  ]
+}
