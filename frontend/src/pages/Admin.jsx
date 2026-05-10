@@ -9,13 +9,16 @@ export default function Admin() {
   const [users, setUsers] = useState([]);
   const [generations, setGenerations] = useState([]);
   const [institutions, setInstitutions] = useState([]);
+  const [jurisprudences, setJurisprudences] = useState([]);
   const [newInst, setNewInst] = useState({ name: "", country: "France", country_code: "FR", city: "", type: "ENA" });
+  const [newJur, setNewJur] = useState({ title: "", country: "France", reference: "", body: "", tags: "" });
 
   const refresh = () => {
     api.get("/admin/stats").then((r) => setStats(r.data));
     api.get("/admin/users").then((r) => setUsers(r.data));
     api.get("/admin/generations").then((r) => setGenerations(r.data));
     api.get("/institutions").then((r) => setInstitutions(r.data));
+    api.get("/jurisprudences", { params: { limit: 100 } }).then((r) => setJurisprudences(r.data));
   };
   useEffect(refresh, []);
 
@@ -39,6 +42,25 @@ export default function Admin() {
   const removeInst = async (id) => {
     if (!window.confirm("Supprimer définitivement ?")) return;
     await api.delete(`/admin/institutions/${id}`);
+    toast.success("Supprimée.");
+    refresh();
+  };
+
+  const addJuris = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/admin/jurisprudences", {
+        ...newJur,
+        tags: newJur.tags ? newJur.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+      });
+      toast.success("Jurisprudence ajoutée.");
+      setNewJur({ title: "", country: "France", reference: "", body: "", tags: "" });
+      refresh();
+    } catch { toast.error("Échec création."); }
+  };
+  const removeJuris = async (id) => {
+    if (!window.confirm("Supprimer ?")) return;
+    await api.delete(`/admin/jurisprudences/${id}`);
     toast.success("Supprimée.");
     refresh();
   };
@@ -72,6 +94,7 @@ export default function Admin() {
           { k: "users", l: "Utilisateurs" },
           { k: "generations", l: "Livrables" },
           { k: "institutions", l: "Institutions" },
+          { k: "jurisprudences", l: "Jurisprudences" },
         ].map((t) => (
           <button
             key={t.k} onClick={() => setTab(t.k)}
@@ -181,6 +204,60 @@ export default function Admin() {
                         onClick={() => removeInst(i.id)} data-testid={`del-inst-${i.id}`}
                         className="text-red-400 hover:text-red-300"
                       ><Trash2 className="w-4 h-4" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {tab === "jurisprudences" && (
+        <div className="grid lg:grid-cols-3 gap-6 mt-6">
+          <form onSubmit={addJuris} className="vf-card p-6 space-y-3" data-testid="admin-add-juris">
+            <div className="vf-serif text-xl text-slate-50">Ajouter une jurisprudence</div>
+            <input required placeholder="Intitulé (ex. CC, déc. 2024-845 DC)" value={newJur.title}
+              onChange={(e) => setNewJur({ ...newJur, title: e.target.value })}
+              className="vf-input w-full px-3 py-2.5" />
+            <input required placeholder="Pays" value={newJur.country}
+              onChange={(e) => setNewJur({ ...newJur, country: e.target.value })}
+              className="vf-input w-full px-3 py-2.5" />
+            <input placeholder="Référence officielle" value={newJur.reference}
+              onChange={(e) => setNewJur({ ...newJur, reference: e.target.value })}
+              className="vf-input w-full px-3 py-2.5" />
+            <textarea required minLength={20} rows={6} placeholder="Texte intégral / extrait pertinent…"
+              value={newJur.body}
+              onChange={(e) => setNewJur({ ...newJur, body: e.target.value })}
+              className="vf-input w-full px-3 py-2.5 resize-y" />
+            <input placeholder="Tags (séparés par virgules)" value={newJur.tags}
+              onChange={(e) => setNewJur({ ...newJur, tags: e.target.value })}
+              className="vf-input w-full px-3 py-2.5" />
+            <button type="submit" className="vf-btn-primary w-full inline-flex items-center justify-center gap-2">
+              <Plus className="w-4 h-4" /> Ajouter
+            </button>
+          </form>
+
+          <div className="lg:col-span-2 vf-card overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[#0F1730] text-[#D4AF37]">
+                <tr><th className="text-left p-3">Titre</th><th>Pays</th><th>Référence</th><th></th></tr>
+              </thead>
+              <tbody>
+                {jurisprudences.length === 0 && (
+                  <tr><td colSpan={4} className="p-6 text-center text-slate-500">
+                    Aucune jurisprudence indexée. Importez votre corpus pour activer le RAG.
+                  </td></tr>
+                )}
+                {jurisprudences.map((j) => (
+                  <tr key={j.id} className="border-t border-[#1E293B]" data-testid={`admin-juris-${j.id}`}>
+                    <td className="p-3 text-slate-100">{j.title}</td>
+                    <td className="text-slate-300 text-center">{j.country}</td>
+                    <td className="text-slate-400 text-xs">{j.reference || "—"}</td>
+                    <td className="text-center">
+                      <button onClick={() => removeJuris(j.id)}
+                        className="text-red-400 hover:text-red-300" data-testid={`del-juris-${j.id}`}>
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}

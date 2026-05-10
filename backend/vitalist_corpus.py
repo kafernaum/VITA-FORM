@@ -51,8 +51,16 @@ Tu n'es pas un assistant généraliste : tu es le scribe doctrinal vitaliste. Ch
 
 
 def build_course_prompt(topic: str, institution: str, country: str, cycle: str,
-                        duration: str, year: int, sources: str = "") -> str:
+                        duration: str, year: int, sources: str = "",
+                        language: str = "fr") -> str:
     extra = f"\n\n## Sources fournies par l'apprenant\n{sources}" if sources else ""
+    if language == "ar":
+        lang_instr = ("\n\n## LANGUE DE GÉNÉRATION\n"
+                      "**Rédige l'intégralité du livrable en arabe littéraire moderne (الفصحى) "
+                      "tout en conservant les références juridiques et bibliographiques en français "
+                      "lorsqu'elles sont d'origine francophone. Les titres doivent être en arabe.**")
+    else:
+        lang_instr = ""
     return f"""Génère un programme de formation académique COMPLET sur le thème suivant, calibré pour l'institution destinataire et entièrement passé au crible de la Théorie Vitaliste.
 
 ## Cadrage
@@ -72,7 +80,7 @@ def build_course_prompt(topic: str, institution: str, country: str, cycle: str,
 7. **Quiz d'évaluation** (10 questions, type ENA, avec corrigé argumenté)
 8. **Bibliographie** (10 références minimum, dont les ouvrages de A. ELY Mustapha)
 
-Utilise du Markdown structuré. Chaque section doit être SUBSTANTIELLE. Conclus impérativement par une « Réécriture vitaliste » synthétisant le temps de vie engagé/restitué par le thème étudié.{extra}"""
+Utilise du Markdown structuré. Chaque section doit être SUBSTANTIELLE. Conclus impérativement par une « Réécriture vitaliste » synthétisant le temps de vie engagé/restitué par le thème étudié.{extra}{lang_instr}"""
 
 
 def build_vitalist_analysis_prompt(document_type: str, document_text: str,

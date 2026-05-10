@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 3 testing of VITA-FORM. 16/16 backend pytest tests passed against the public preview URL covering smoke, sources upload (TXT + PDF + bad-format), jurisprudences (admin create/search-by-q with $text score/filter-by-country/get/delete), Stripe real checkout (session+url returned, payment_transactions row inserted with status=initiated, status endpoint returns pending), generation payload validation (source_ids/jurisprudence_ids/language='ar' accepted; non-422), and email_service module (import + best-effort send to delivered@resend.dev). Frontend smoke: admin login flow works (200 + JWT in localStorage), /generator renders with all required testids (gen-language, upload-source-btn, juris-q, gen-submit, generator-form), Admin tab and admin-add-juris form present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Generator", "issues": ["React hydration warning: <span> child inside <option value='ar'> — caused by Emergent preview's x-ve-dynamic injection wrapping inline text+expression. Cosmetic only; option still functions. Consider wrapping the conditional text in a fragment or using a single string template."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~935 lines — consider splitting into routers (auth.py, generations.py, payments.py, sources.py, jurisprudences.py, admin.py) for maintainability before next iteration.",
+    "_call_claude masks all non-budget exceptions as 502 with raw exc[:200] — fine for dev, but consider scrubbing API keys before logging in prod.",
+    "/api/jurisprudences fallback path deletes query['$text'] then runs regex — works, but a Mongo text-index is created at startup so fallback is unlikely to trigger; safe.",
+    "Stripe webhook does NOT verify Stripe-Signature against an env webhook secret (delegated to emergentintegrations). Confirm provider validates signature; otherwise add signature verification before flipping paid=true.",
+    "Storage upload uses requests.post synchronously inside asyncio.to_thread — acceptable. 10MB cap enforced via length check after read; consider streaming for memory safety on larger files.",
+    "Generator.jsx <option value='ar'> contains both text + JSX expression — wrap in single string to avoid hydration warning."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% smoke"},
+  "test_credentials": "admin@vita-form.com / VitaForm2026!Admin (seeded). /app/memory/test_credentials.md still references removed /api/payments/mock-checkout — recommend updating to mention real Stripe /api/payments/checkout.",
+  "seed_data_creation": "Tests create + delete TEST_-prefixed sources and jurisprudences. One persistent generation row was inserted via direct Mongo for Stripe test (kept for trace); harmless.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Public preview URL https://formation-finances.preview.emergentagent.com is intermittently flaky (occasional 000 timeouts at the ingress); retry once if a network call hangs. EMERGENT_LLM_KEY budget appears partially exhausted — /api/generations may return 502 (LLM upstream timeout/retry) intermittently; the request validation always passes (non-422). The /api/payments/checkout/status returns payment_status='unpaid' from Stripe (we accept both 'pending' and 'unpaid' in tests). For PDF extraction tests use reportlab to generate a 1-page PDF (already implemented). Storage init requires EMERGENT_LLM_KEY to be present — make sure it's loaded before bootstrap.",
+  "rca of the issue": "No bugs found requiring fix. Hydration warning is cosmetic, caused by Emergent preview tool's dev-time DOM annotation, not a runtime issue."
+}

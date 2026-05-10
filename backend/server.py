@@ -16,7 +16,10 @@ from typing import List, Optional, Literal
 import bcrypt
 import jwt
 import asyncio
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Header, Request
+from fastapi import (
+    FastAPI, APIRouter, HTTPException, Depends, status, Header, Request,
+    UploadFile, File, Query,
+)
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -37,6 +40,9 @@ from vitalist_corpus import (
     build_vitalist_analysis_prompt,
 )
 from exporters import render_pdf, render_docx, render_slides_html
+from storage_client import init_storage, put_object, APP_NAME
+from sources_extractor import extract as extract_source
+from email_service import send_payment_confirmation
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +149,9 @@ class GenerationCreate(BaseModel):
     duration: str
     year: int = Field(default_factory=lambda: datetime.now().year)
     sources: Optional[str] = ""
+    source_ids: Optional[List[str]] = None  # uploaded source IDs to inline
+    jurisprudence_ids: Optional[List[str]] = None  # corpus refs to inline
+    language: Literal["fr", "ar"] = "fr"
 
 
 class VitalistAnalyzeIn(BaseModel):
@@ -165,6 +174,14 @@ class InstitutionIn(BaseModel):
     type: str
 
 
+class JurisprudenceIn(BaseModel):
+    title: str = Field(min_length=3)
+    country: str
+    body: str = Field(min_length=20)
+    reference: Optional[str] = ""
+    tags: Optional[List[str]] = None
+
+
 class StripeCheckoutIn(BaseModel):
     generation_id: str
     origin_url: str  # window.location.origin from frontend
@@ -175,12 +192,27 @@ class StripeCheckoutIn(BaseModel):
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def bootstrap():
+    # Init Emergent object storage
+    try:
+        init_storage()
+    except Exception as exc:
+        logger.warning("Storage init failed: %s", exc)
+
     # Seed institutions if empty
     count = await db.institutions.count_documents({})
     if count == 0:
         for it in INSTITUTIONS_SEED:
             await db.institutions.insert_one({**it, "id": str(uuid.uuid4())})
         logger.info("Seeded %d institutions", len(INSTITUTIONS_SEED))
+
+    # Ensure text index for jurisprudence search
+    try:
+        await db.jurisprudences.create_index(
+            [("title", "text"), ("body", "text"), ("reference", "text")],
+            default_language="french",
+        )
+    except Exception as exc:
+        logger.warning("Jurisprudence text index: %s", exc)
 
     # Ensure default admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@vita-form.com")
@@ -324,6 +356,7 @@ async def create_generation(payload: GenerationCreate, user: dict = Depends(get_
         "cycle": payload.cycle,
         "duration": payload.duration,
         "year": payload.year,
+        "language": payload.language,
         "content": content,
         "kind": "course",
         "paid": False,
@@ -331,6 +364,31 @@ async def create_generation(payload: GenerationCreate, user: dict = Depends(get_
     }
     await db.generations.insert_one(doc.copy())
     return _public_generation(doc, user)
+
+
+async def _resolve_sources(user_id: str, payload: "GenerationCreate") -> str:
+    """Concat sources from user uploads + jurisprudences + free text."""
+    parts: list[str] = []
+    if payload.sources:
+        parts.append(payload.sources.strip())
+    if payload.source_ids:
+        rows = await db.sources.find(
+            {"id": {"$in": payload.source_ids}, "user_id": user_id, "is_deleted": False},
+            {"_id": 0, "extracted_text": 1, "original_filename": 1},
+        ).to_list(20)
+        for r in rows:
+            txt = (r.get("extracted_text") or "").strip()
+            if txt:
+                parts.append(f"### Source utilisateur — {r.get('original_filename','sans nom')}\n{txt}")
+    if payload.jurisprudence_ids:
+        rows = await db.jurisprudences.find(
+            {"id": {"$in": payload.jurisprudence_ids}},
+            {"_id": 0, "title": 1, "reference": 1, "body": 1, "country": 1},
+        ).to_list(20)
+        for r in rows:
+            ref = f" ({r.get('reference')})" if r.get('reference') else ""
+            parts.append(f"### Jurisprudence — {r.get('title')}{ref} · {r.get('country')}\n{r.get('body','')}")
+    return "\n\n".join(parts)
 
 
 @api.post("/vitalist/analyze")
@@ -599,6 +657,7 @@ async def stripe_checkout_status(session_id: str, request: Request,
             {"$set": {"paid": True, "paid_at": datetime.now(timezone.utc).isoformat(),
                       "payment_session_id": session_id}},
         )
+        await _send_payment_email(txn["generation_id"], txn.get("user_email"))
 
     return {
         "session_id": session_id,
@@ -608,6 +667,25 @@ async def stripe_checkout_status(session_id: str, request: Request,
         "currency": currency,
         "generation_id": txn["generation_id"],
     }
+
+
+async def _send_payment_email(generation_id: str, user_email: Optional[str]) -> None:
+    if not user_email:
+        return
+    gen = await db.generations.find_one({"id": generation_id}, {"_id": 0})
+    if not gen:
+        return
+    user = await db.users.find_one({"id": gen["user_id"]}, {"_id": 0, "password_hash": 0})
+    full_name = (user or {}).get("full_name", "Apprenant")
+    try:
+        await send_payment_confirmation(
+            recipient_email=user_email,
+            full_name=full_name,
+            topic=gen.get("topic", "Livrable VITA-FORM"),
+            generation_id=generation_id,
+        )
+    except Exception as exc:
+        logger.warning("Email post-paiement échec: %s", exc)
 
 
 @api.post("/webhook/stripe")
@@ -640,6 +718,7 @@ async def stripe_webhook(request: Request):
                           "paid_at": datetime.now(timezone.utc).isoformat(),
                           "payment_session_id": event.session_id}},
             )
+            await _send_payment_email(txn["generation_id"], txn.get("user_email"))
     return {"received": True, "event_type": event.event_type}
 
 
@@ -703,6 +782,137 @@ async def admin_delete_institution(inst_id: str, _: dict = Depends(require_admin
     res = await db.institutions.delete_one({"id": inst_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Institution introuvable.")
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Sources upload (PDF / DOCX / TXT) — extraction texte pour le RAG
+# ---------------------------------------------------------------------------
+ALLOWED_EXT = {"pdf", "docx", "txt"}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+@api.post("/sources/upload")
+async def upload_source(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    name = file.filename or "source.bin"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "bin"
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(status_code=400,
+                            detail="Format non supporté. Utilisez PDF, DOCX ou TXT.")
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Fichier trop volumineux (10 Mo max).")
+
+    storage_path = f"{APP_NAME}/uploads/{user['id']}/{uuid.uuid4()}.{ext}"
+    try:
+        result = await asyncio.to_thread(
+            put_object, storage_path, data,
+            file.content_type or "application/octet-stream",
+        )
+    except Exception as exc:
+        logger.exception("Storage upload failed")
+        raise HTTPException(status_code=502, detail=f"Échec stockage: {exc}")
+
+    extracted = await asyncio.to_thread(extract_source, name, file.content_type, data)
+
+    src_id = str(uuid.uuid4())
+    doc = {
+        "id": src_id,
+        "user_id": user["id"],
+        "storage_path": result["path"],
+        "original_filename": name,
+        "content_type": file.content_type or "application/octet-stream",
+        "size": result.get("size", len(data)),
+        "extracted_text": extracted,
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.sources.insert_one(doc.copy())
+    return {
+        "id": src_id,
+        "original_filename": name,
+        "size": doc["size"],
+        "extracted_chars": len(extracted),
+        "preview": extracted[:400],
+    }
+
+
+@api.get("/sources")
+async def list_sources(user: dict = Depends(get_current_user)):
+    rows = await db.sources.find(
+        {"user_id": user["id"], "is_deleted": False},
+        {"_id": 0, "extracted_text": 0, "storage_path": 0},
+    ).sort("created_at", -1).to_list(200)
+    return rows
+
+
+@api.delete("/sources/{source_id}")
+async def delete_source(source_id: str, user: dict = Depends(get_current_user)):
+    res = await db.sources.update_one(
+        {"id": source_id, "user_id": user["id"]},
+        {"$set": {"is_deleted": True}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Source introuvable.")
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Jurisprudences (RAG juridique) — recherche full-text MongoDB
+# ---------------------------------------------------------------------------
+@api.get("/jurisprudences")
+async def search_jurisprudences(q: Optional[str] = Query(None),
+                                 country: Optional[str] = Query(None),
+                                 limit: int = Query(20, ge=1, le=100),
+                                 _: dict = Depends(get_current_user)):
+    query: dict = {}
+    if country:
+        query["country"] = country
+    projection = {"_id": 0, "body": 0}
+    if q:
+        try:
+            query["$text"] = {"$search": q}
+            projection["score"] = {"$meta": "textScore"}
+            cursor = db.jurisprudences.find(query, projection).sort(
+                [("score", {"$meta": "textScore"})]).limit(limit)
+        except Exception:
+            # Fallback regex if text index unavailable
+            del query["$text"]
+            query["$or"] = [{"title": {"$regex": q, "$options": "i"}},
+                            {"body": {"$regex": q, "$options": "i"}}]
+            cursor = db.jurisprudences.find(query, projection).limit(limit)
+    else:
+        cursor = db.jurisprudences.find(query, projection).sort("created_at", -1).limit(limit)
+    items = await cursor.to_list(limit)
+    return items
+
+
+@api.get("/jurisprudences/{jur_id}")
+async def get_jurisprudence(jur_id: str, _: dict = Depends(get_current_user)):
+    doc = await db.jurisprudences.find_one({"id": jur_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Jurisprudence introuvable.")
+    return doc
+
+
+@api.post("/admin/jurisprudences")
+async def admin_create_jurisprudence(payload: JurisprudenceIn,
+                                      _: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload.model_dump(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.jurisprudences.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/admin/jurisprudences/{jur_id}")
+async def admin_delete_jurisprudence(jur_id: str, _: dict = Depends(require_admin)):
+    res = await db.jurisprudences.delete_one({"id": jur_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Jurisprudence introuvable.")
     return {"status": "ok"}
 
 
