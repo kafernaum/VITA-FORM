@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { api, API } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 import { toast } from "sonner";
-import { Lock, Download, FileText, FileType2, Presentation, CheckCircle2 } from "lucide-react";
+import { Lock, Download, FileText, FileType2, Presentation, CheckCircle2, ExternalLink } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 export default function Preview() {
@@ -12,7 +12,6 @@ export default function Preview() {
   const [loading, setLoading] = useState(true);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const [paying, setPaying] = useState(false);
-  const [method, setMethod] = useState("card");
 
   const load = () => {
     api.get(`/generations/${id}`).then((r) => setDoc(r.data)).finally(() => setLoading(false));
@@ -42,13 +41,16 @@ export default function Preview() {
   const checkout = async () => {
     setPaying(true);
     try {
-      await api.post("/payments/mock-checkout", { generation_id: id, method });
-      toast.success("Paiement enregistré. Livrable débloqué.");
-      setPaywallOpen(false);
-      load();
+      const { data } = await api.post("/payments/checkout", {
+        generation_id: id,
+        origin_url: window.location.origin,
+      });
+      // Redirection vers Stripe Checkout
+      window.location.href = data.url;
     } catch (e) {
-      toast.error("Paiement échoué.");
-    } finally { setPaying(false); }
+      toast.error(e?.response?.data?.detail || "Initialisation du paiement impossible.");
+      setPaying(false);
+    }
   };
 
   if (loading) return <div className="max-w-5xl mx-auto px-6 py-20 text-slate-400">Chargement…</div>;
@@ -142,30 +144,32 @@ export default function Preview() {
           <DialogHeader>
             <DialogTitle className="vf-serif text-2xl text-slate-50">Accès au livrable complet</DialogTitle>
             <DialogDescription className="text-slate-400">
-              Le téléchargement PDF / Word / Slides est protégé. Mode démonstration : paiement simulé pour le MVP.
+              Paiement sécurisé via Stripe Checkout. Vous serez redirigé vers la page de paiement,
+              puis vous reviendrez automatiquement sur VITA-FORM.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-3">
-            <div className="text-sm text-slate-300">Montant : <span className="text-[#D4AF37] vf-mono">{doc.paywall_price_eur?.toFixed(2)} €</span></div>
-            <div className="grid grid-cols-2 gap-2">
-              {["card", "paypal"].map((m) => (
-                <button
-                  key={m} onClick={() => setMethod(m)}
-                  data-testid={`paywall-${m}`}
-                  className={`py-3 border text-sm ${method === m ? "border-[#D4AF37] text-[#D4AF37]" : "border-[#1E293B] text-slate-400"}`}
-                >
-                  {m === "card" ? "Carte de crédit" : "PayPal"}
-                </button>
-              ))}
+            <div className="text-sm text-slate-300 flex items-baseline justify-between border border-[#D4AF37]/20 px-4 py-3">
+              <span>Livrable VITA-FORM (PDF + Word + Slides)</span>
+              <span className="text-[#D4AF37] vf-mono text-lg">{doc.paywall_price_eur?.toFixed(2)} €</span>
             </div>
             <p className="text-xs text-slate-500 italic">
-              Production : passerelle PayPal vers <code>ely.mustapha@yahoo.ca</code> (Merchant ID XGYL8NPMKHDUY) ou Stripe Card.
+              Mode test Stripe : utilisez la carte <span className="vf-mono">4242 4242 4242 4242</span>, n'importe
+              quelle date future et CVC.
             </p>
           </div>
           <DialogFooter>
-            <button onClick={() => setPaywallOpen(false)} className="vf-btn-ghost" data-testid="paywall-cancel">Annuler</button>
-            <button onClick={checkout} disabled={paying} className="vf-btn-primary" data-testid="paywall-confirm">
-              {paying ? "Traitement…" : "Confirmer le paiement"}
+            <button onClick={() => setPaywallOpen(false)} className="vf-btn-ghost" data-testid="paywall-cancel">
+              Annuler
+            </button>
+            <button
+              onClick={checkout} disabled={paying}
+              className="vf-btn-primary inline-flex items-center gap-2"
+              data-testid="paywall-confirm"
+            >
+              {paying ? "Redirection…" : (
+                <>Payer avec Stripe <ExternalLink className="w-3.5 h-3.5" /></>
+              )}
             </button>
           </DialogFooter>
         </DialogContent>

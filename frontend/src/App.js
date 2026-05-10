@@ -11,6 +11,7 @@ import Library from "@/pages/Library";
 import Analyse from "@/pages/Analyse";
 import Auteur from "@/pages/Auteur";
 import Admin from "@/pages/Admin";
+import PaymentSuccess from "@/pages/PaymentSuccess";
 import "@/App.css";
 
 function ProtectedRoute({ children, adminOnly = false }) {
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/analyse" element={<Shell><ProtectedRoute><Analyse /></ProtectedRoute></Shell>} />
           <Route path="/library" element={<Shell><ProtectedRoute><Library /></ProtectedRoute></Shell>} />
           <Route path="/preview/:id" element={<Shell><ProtectedRoute><Preview /></ProtectedRoute></Shell>} />
+          <Route path="/payment/success" element={<Shell><ProtectedRoute><PaymentSuccess /></ProtectedRoute></Shell>} />
           <Route path="/admin" element={<Shell><ProtectedRoute adminOnly><Admin /></ProtectedRoute></Shell>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

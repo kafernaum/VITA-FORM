@@ -15,7 +15,8 @@ from typing import List, Optional, Literal
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Header
+import asyncio
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Header, Request
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -23,6 +24,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout,
+    CheckoutSessionRequest,
+)
+import stripe as stripe_sdk
 
 from seeds import INSTITUTIONS_SEED, CYCLES, DURATIONS, DAILY_SALARIES
 from vitalist_corpus import (
@@ -48,6 +54,13 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "vitaform-secret")
 JWT_ALG = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXP_HOURS = 24 * 7
 PAYWALL_PRICE = float(os.environ.get("PAYWALL_PRICE_EUR", "14.90"))
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+
+# Fixed pricing packages (server-side only, NEVER trust client amounts)
+PAYWALL_PACKAGES = {
+    "single_deliverable": {"amount": PAYWALL_PRICE, "currency": "eur",
+                            "label": "Livrable unique VITA-FORM"},
+}
 
 LLM_MODEL = ("anthropic", "claude-sonnet-4-5-20250929")
 
@@ -152,9 +165,9 @@ class InstitutionIn(BaseModel):
     type: str
 
 
-class MockCheckoutIn(BaseModel):
+class StripeCheckoutIn(BaseModel):
     generation_id: str
-    method: Literal["card", "paypal"] = "card"
+    origin_url: str  # window.location.origin from frontend
 
 
 # ---------------------------------------------------------------------------
@@ -475,32 +488,159 @@ async def download_generation(
 
 
 # ---------------------------------------------------------------------------
-# Paiement (mock pour MVP)
+# Paiement Stripe (réel — clé test du pod)
 # ---------------------------------------------------------------------------
-@api.post("/payments/mock-checkout")
-async def mock_checkout(payload: MockCheckoutIn, user: dict = Depends(get_current_user)):
+@api.post("/payments/checkout")
+async def stripe_create_checkout(payload: StripeCheckoutIn, request: Request,
+                                  user: dict = Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="Stripe non configuré.")
     doc = await db.generations.find_one({"id": payload.generation_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Livrable introuvable.")
     if doc["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Accès refusé.")
-    payment_id = str(uuid.uuid4())
-    await db.payments.insert_one({
-        "id": payment_id,
+
+    pkg = PAYWALL_PACKAGES["single_deliverable"]
+    origin = payload.origin_url.rstrip("/")
+    success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/preview/{payload.generation_id}"
+
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+    metadata = {
         "user_id": user["id"],
+        "user_email": user["email"],
         "generation_id": payload.generation_id,
-        "amount_eur": PAYWALL_PRICE,
-        "method": payload.method,
-        "status": "succeeded",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "mock": True,
-    })
-    await db.generations.update_one(
-        {"id": payload.generation_id},
-        {"$set": {"paid": True, "paid_at": datetime.now(timezone.utc).isoformat(),
-                  "payment_id": payment_id}},
+        "package_id": "single_deliverable",
+    }
+    req = CheckoutSessionRequest(
+        amount=pkg["amount"], currency=pkg["currency"],
+        success_url=success_url, cancel_url=cancel_url, metadata=metadata,
     )
-    return {"status": "succeeded", "payment_id": payment_id, "amount_eur": PAYWALL_PRICE}
+    try:
+        session = await stripe_checkout.create_checkout_session(req)
+    except Exception as exc:
+        logger.exception("Stripe session creation failed")
+        raise HTTPException(status_code=502, detail=f"Échec Stripe : {exc}")
+
+    # Persist payment_transactions row (status = initiated)
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "user_email": user["email"],
+        "generation_id": payload.generation_id,
+        "amount": pkg["amount"],
+        "currency": pkg["currency"],
+        "metadata": metadata,
+        "status": "initiated",
+        "payment_status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api.get("/payments/checkout/status/{session_id}")
+async def stripe_checkout_status(session_id: str, request: Request,
+                                  user: dict = Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="Stripe non configuré.")
+
+    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction introuvable.")
+    if txn["user_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Accès refusé.")
+
+    # If the webhook has already flipped status to paid, short-circuit.
+    if txn.get("payment_status") == "paid":
+        return {
+            "session_id": session_id,
+            "status": txn.get("status", "complete"),
+            "payment_status": "paid",
+            "amount_total": int(txn.get("amount", 0) * 100),
+            "currency": txn.get("currency", "eur"),
+            "generation_id": txn["generation_id"],
+        }
+
+    # Otherwise, try a fresh Stripe retrieve (best-effort; webhook is source of truth)
+    host_url = str(request.base_url)
+    StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host_url}api/webhook/stripe")
+    new_status = txn.get("status", "open")
+    new_payment = txn.get("payment_status", "pending")
+    amount_total = int(txn.get("amount", 0) * 100)
+    currency = txn.get("currency", "eur")
+    try:
+        sess = await asyncio.to_thread(
+            stripe_sdk.checkout.Session.retrieve, session_id
+        )
+        new_status = sess.get("status") or new_status
+        new_payment = sess.get("payment_status") or new_payment
+        amount_total = sess.get("amount_total") or amount_total
+        currency = sess.get("currency") or currency
+    except Exception as exc:
+        # Proxy may temporarily return 404 — webhook will eventually catch it
+        logger.warning("Stripe retrieve failed (will rely on webhook): %s", exc)
+
+    update = {
+        "status": new_status,
+        "payment_status": new_payment,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
+
+    if new_payment == "paid" and txn["payment_status"] != "paid":
+        await db.generations.update_one(
+            {"id": txn["generation_id"]},
+            {"$set": {"paid": True, "paid_at": datetime.now(timezone.utc).isoformat(),
+                      "payment_session_id": session_id}},
+        )
+
+    return {
+        "session_id": session_id,
+        "status": new_status,
+        "payment_status": new_payment,
+        "amount_total": amount_total,
+        "currency": currency,
+        "generation_id": txn["generation_id"],
+    }
+
+
+@api.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    if not STRIPE_API_KEY:
+        return {"status": "stripe_disabled"}
+    body = await request.body()
+    signature = request.headers.get("Stripe-Signature", "")
+    host_url = str(request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    try:
+        event = await stripe_checkout.handle_webhook(body, signature)
+    except Exception as exc:
+        logger.exception("Stripe webhook failed")
+        raise HTTPException(status_code=400, detail=f"Webhook invalide: {exc}")
+
+    if event.session_id:
+        txn = await db.payment_transactions.find_one(
+            {"session_id": event.session_id}, {"_id": 0})
+        if txn and event.payment_status == "paid" and txn["payment_status"] != "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": event.session_id},
+                {"$set": {"payment_status": "paid", "status": "complete",
+                          "updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            await db.generations.update_one(
+                {"id": txn["generation_id"]},
+                {"$set": {"paid": True,
+                          "paid_at": datetime.now(timezone.utc).isoformat(),
+                          "payment_session_id": event.session_id}},
+            )
+    return {"received": True, "event_type": event.event_type}
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +652,8 @@ async def admin_users(_: dict = Depends(require_admin)):
     # enrichir avec stats
     for it in items:
         it["generations_count"] = await db.generations.count_documents({"user_id": it["id"]})
-        it["payments_count"] = await db.payments.count_documents({"user_id": it["id"]})
+        it["payments_count"] = await db.payment_transactions.count_documents(
+            {"user_id": it["id"], "payment_status": "paid"})
     return items
 
 
@@ -537,7 +678,7 @@ async def admin_stats(_: dict = Depends(require_admin)):
     return {
         "users": await db.users.count_documents({}),
         "generations": await db.generations.count_documents({}),
-        "payments": await db.payments.count_documents({"status": "succeeded"}),
+        "payments": await db.payment_transactions.count_documents({"payment_status": "paid"}),
         "institutions": await db.institutions.count_documents({}),
     }
 
