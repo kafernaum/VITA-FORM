@@ -27,11 +27,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout,
-    CheckoutSessionRequest,
-)
-import stripe as stripe_sdk
 
 from seeds import INSTITUTIONS_SEED, CYCLES, DURATIONS, DAILY_SALARIES
 from jurisprudence_seed import JURISPRUDENCES_SEED
@@ -44,6 +39,14 @@ from exporters import render_pdf, render_docx, render_slides_html
 from storage_client import init_storage, put_object, APP_NAME
 from sources_extractor import extract as extract_source
 from email_service import send_payment_confirmation
+from paypal_service import (
+    build_checkout_url as paypal_build_checkout_url,
+    verify_ipn as paypal_verify_ipn,
+    is_payment_acceptable as paypal_is_payment_acceptable,
+    SUPPORTED_CURRENCIES as PAYPAL_CURRENCIES,
+    PRICE_BY_CURRENCY as PAYPAL_PRICES,
+    get_business_email as paypal_business_email,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +64,6 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "vitaform-secret")
 JWT_ALG = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXP_HOURS = 24 * 7
 PAYWALL_PRICE = float(os.environ.get("PAYWALL_PRICE_EUR", "14.90"))
-STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
-
-# Fixed pricing packages (server-side only, NEVER trust client amounts)
-PAYWALL_PACKAGES = {
-    "single_deliverable": {"amount": PAYWALL_PRICE, "currency": "eur",
-                            "label": "Livrable unique VITA-FORM"},
-}
 
 LLM_MODEL = ("anthropic", "claude-sonnet-4-5-20250929")
 
@@ -183,9 +179,10 @@ class JurisprudenceIn(BaseModel):
     tags: Optional[List[str]] = None
 
 
-class StripeCheckoutIn(BaseModel):
+class PayPalCheckoutIn(BaseModel):
     generation_id: str
-    origin_url: str  # window.location.origin from frontend
+    origin_url: str
+    currency: str = "EUR"
 
 
 # ---------------------------------------------------------------------------
@@ -557,125 +554,86 @@ async def download_generation(
 
 
 # ---------------------------------------------------------------------------
-# Paiement Stripe (réel — clé test du pod)
+# Paiement PayPal (compte personnel/business standard, flux _xclick)
 # ---------------------------------------------------------------------------
+@api.get("/payments/options")
+async def payment_options():
+    """Devises supportées + grille tarifaire."""
+    return {
+        "currencies": PAYPAL_CURRENCIES,
+        "prices": PAYPAL_PRICES,
+        "default_currency": "EUR",
+        "merchant_email": paypal_business_email(),
+    }
+
+
 @api.post("/payments/checkout")
-async def stripe_create_checkout(payload: StripeCheckoutIn, request: Request,
+async def paypal_create_checkout(payload: PayPalCheckoutIn,
                                   user: dict = Depends(get_current_user)):
-    if not STRIPE_API_KEY:
-        raise HTTPException(status_code=500, detail="Stripe non configuré.")
+    if not paypal_business_email():
+        raise HTTPException(status_code=500, detail="PayPal non configuré.")
+    currency = payload.currency.upper()
+    if currency not in PAYPAL_CURRENCIES:
+        raise HTTPException(status_code=400, detail=f"Devise non supportée : {currency}")
+
     doc = await db.generations.find_one({"id": payload.generation_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Livrable introuvable.")
     if doc["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Accès refusé.")
 
-    pkg = PAYWALL_PACKAGES["single_deliverable"]
+    amount = PAYPAL_PRICES.get(currency, PAYWALL_PRICE)
+    txn_id = str(uuid.uuid4())
     origin = payload.origin_url.rstrip("/")
-    success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+    return_url = f"{origin}/payment/success?txn_id={txn_id}"
     cancel_url = f"{origin}/preview/{payload.generation_id}"
+    # Public URL is required for PayPal IPN (preview/prod)
+    notify_url = f"{os.environ.get('PUBLIC_APP_URL', origin)}/api/webhook/paypal"
 
-    host_url = str(request.base_url)
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    item_name = f"VITA-FORM — Livrable « {doc.get('topic','')[:90]} »"
 
-    metadata = {
-        "user_id": user["id"],
-        "user_email": user["email"],
-        "generation_id": payload.generation_id,
-        "package_id": "single_deliverable",
-    }
-    req = CheckoutSessionRequest(
-        amount=pkg["amount"], currency=pkg["currency"],
-        success_url=success_url, cancel_url=cancel_url, metadata=metadata,
-    )
     try:
-        session = await stripe_checkout.create_checkout_session(req)
+        url = paypal_build_checkout_url(
+            txn_id=txn_id, item_name=item_name, amount=amount,
+            currency=currency, return_url=return_url,
+            cancel_url=cancel_url, notify_url=notify_url,
+        )
     except Exception as exc:
-        logger.exception("Stripe session creation failed")
-        raise HTTPException(status_code=502, detail=f"Échec Stripe : {exc}")
+        logger.exception("PayPal URL build failed")
+        raise HTTPException(status_code=502, detail=f"Échec PayPal : {exc}")
 
-    # Persist payment_transactions row (status = initiated)
     await db.payment_transactions.insert_one({
-        "id": str(uuid.uuid4()),
-        "session_id": session.session_id,
+        "id": txn_id,
+        "session_id": txn_id,  # alias pour compat ascendante
+        "provider": "paypal",
         "user_id": user["id"],
         "user_email": user["email"],
         "generation_id": payload.generation_id,
-        "amount": pkg["amount"],
-        "currency": pkg["currency"],
-        "metadata": metadata,
+        "amount": amount,
+        "currency": currency,
         "status": "initiated",
         "payment_status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
-    return {"url": session.url, "session_id": session.session_id}
+    return {"url": url, "txn_id": txn_id, "amount": amount, "currency": currency}
 
 
-@api.get("/payments/checkout/status/{session_id}")
-async def stripe_checkout_status(session_id: str, request: Request,
+@api.get("/payments/checkout/status/{txn_id}")
+async def paypal_checkout_status(txn_id: str,
                                   user: dict = Depends(get_current_user)):
-    if not STRIPE_API_KEY:
-        raise HTTPException(status_code=500, detail="Stripe non configuré.")
-
-    txn = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    txn = await db.payment_transactions.find_one({"id": txn_id}, {"_id": 0})
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction introuvable.")
     if txn["user_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accès refusé.")
-
-    # If the webhook has already flipped status to paid, short-circuit.
-    if txn.get("payment_status") == "paid":
-        return {
-            "session_id": session_id,
-            "status": txn.get("status", "complete"),
-            "payment_status": "paid",
-            "amount_total": int(txn.get("amount", 0) * 100),
-            "currency": txn.get("currency", "eur"),
-            "generation_id": txn["generation_id"],
-        }
-
-    # Otherwise, try a fresh Stripe retrieve (best-effort; webhook is source of truth)
-    host_url = str(request.base_url)
-    StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host_url}api/webhook/stripe")
-    new_status = txn.get("status", "open")
-    new_payment = txn.get("payment_status", "pending")
-    amount_total = int(txn.get("amount", 0) * 100)
-    currency = txn.get("currency", "eur")
-    try:
-        sess = await asyncio.to_thread(
-            stripe_sdk.checkout.Session.retrieve, session_id
-        )
-        new_status = sess.get("status") or new_status
-        new_payment = sess.get("payment_status") or new_payment
-        amount_total = sess.get("amount_total") or amount_total
-        currency = sess.get("currency") or currency
-    except Exception as exc:
-        # Proxy may temporarily return 404 — webhook will eventually catch it
-        logger.warning("Stripe retrieve failed (will rely on webhook): %s", exc)
-
-    update = {
-        "status": new_status,
-        "payment_status": new_payment,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
-
-    if new_payment == "paid" and txn["payment_status"] != "paid":
-        await db.generations.update_one(
-            {"id": txn["generation_id"]},
-            {"$set": {"paid": True, "paid_at": datetime.now(timezone.utc).isoformat(),
-                      "payment_session_id": session_id}},
-        )
-        await _send_payment_email(txn["generation_id"], txn.get("user_email"))
-
     return {
-        "session_id": session_id,
-        "status": new_status,
-        "payment_status": new_payment,
-        "amount_total": amount_total,
-        "currency": currency,
+        "txn_id": txn_id,
+        "session_id": txn_id,
+        "status": txn.get("status", "initiated"),
+        "payment_status": txn.get("payment_status", "pending"),
+        "amount": txn.get("amount"),
+        "currency": txn.get("currency"),
         "generation_id": txn["generation_id"],
     }
 
@@ -686,12 +644,11 @@ async def _send_payment_email(generation_id: str, user_email: Optional[str]) -> 
     gen = await db.generations.find_one({"id": generation_id}, {"_id": 0})
     if not gen:
         return
-    user = await db.users.find_one({"id": gen["user_id"]}, {"_id": 0, "password_hash": 0})
-    full_name = (user or {}).get("full_name", "Apprenant")
+    u = await db.users.find_one({"id": gen["user_id"]}, {"_id": 0, "password_hash": 0})
+    full_name = (u or {}).get("full_name", "Apprenant")
     try:
         await send_payment_confirmation(
-            recipient_email=user_email,
-            full_name=full_name,
+            recipient_email=user_email, full_name=full_name,
             topic=gen.get("topic", "Livrable VITA-FORM"),
             generation_id=generation_id,
         )
@@ -699,38 +656,71 @@ async def _send_payment_email(generation_id: str, user_email: Optional[str]) -> 
         logger.warning("Email post-paiement échec: %s", exc)
 
 
-@api.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
-    if not STRIPE_API_KEY:
-        return {"status": "stripe_disabled"}
-    body = await request.body()
-    signature = request.headers.get("Stripe-Signature", "")
-    host_url = str(request.base_url)
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-    try:
-        event = await stripe_checkout.handle_webhook(body, signature)
-    except Exception as exc:
-        logger.exception("Stripe webhook failed")
-        raise HTTPException(status_code=400, detail=f"Webhook invalide: {exc}")
+@api.post("/webhook/paypal")
+async def paypal_ipn_webhook(request: Request):
+    """Reçoit l'IPN PayPal, le vérifie, déverrouille le livrable."""
+    raw = await request.body()
+    if not raw:
+        return {"status": "empty"}
 
-    if event.session_id:
-        txn = await db.payment_transactions.find_one(
-            {"session_id": event.session_id}, {"_id": 0})
-        if txn and event.payment_status == "paid" and txn["payment_status"] != "paid":
-            await db.payment_transactions.update_one(
-                {"session_id": event.session_id},
-                {"$set": {"payment_status": "paid", "status": "complete",
-                          "updated_at": datetime.now(timezone.utc).isoformat()}},
-            )
-            await db.generations.update_one(
-                {"id": txn["generation_id"]},
-                {"$set": {"paid": True,
-                          "paid_at": datetime.now(timezone.utc).isoformat(),
-                          "payment_session_id": event.session_id}},
-            )
-            await _send_payment_email(txn["generation_id"], txn.get("user_email"))
-    return {"received": True, "event_type": event.event_type}
+    # Parse form-urlencoded payload
+    from urllib.parse import parse_qs
+    parsed = parse_qs(raw.decode("utf-8", errors="ignore"), keep_blank_values=True)
+    ipn = {k: (v[0] if v else "") for k, v in parsed.items()}
+
+    txn_id = ipn.get("custom") or ipn.get("item_number")
+    if not txn_id:
+        logger.warning("IPN sans custom/item_number")
+        return {"status": "ignored"}
+
+    # 1. Vérification chez PayPal (anti-spoof)
+    verified = await asyncio.to_thread(paypal_verify_ipn, raw)
+    if not verified:
+        logger.warning("IPN PayPal NON vérifié pour txn=%s", txn_id)
+        return {"status": "invalid"}
+
+    txn = await db.payment_transactions.find_one({"id": txn_id}, {"_id": 0})
+    if not txn:
+        logger.warning("IPN reçu pour txn inconnu: %s", txn_id)
+        return {"status": "unknown_txn"}
+
+    # 2. Idempotence
+    if txn.get("payment_status") == "paid":
+        return {"status": "already_processed"}
+
+    # 3. Contrôles métier (montant, devise, destinataire)
+    ok, reason = paypal_is_payment_acceptable(
+        ipn,
+        expected_amount=float(txn.get("amount", 0)),
+        expected_currency=txn.get("currency", "EUR"),
+    )
+
+    update = {
+        "ipn_payload": ipn,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not ok:
+        update["status"] = "rejected"
+        update["rejection_reason"] = reason
+        await db.payment_transactions.update_one({"id": txn_id}, {"$set": update})
+        logger.warning("IPN rejeté txn=%s reason=%s", txn_id, reason)
+        return {"status": "rejected", "reason": reason}
+
+    # 4. Déverrouillage idempotent
+    update["status"] = "complete"
+    update["payment_status"] = "paid"
+    update["paypal_txn_id"] = ipn.get("txn_id", "")
+    await db.payment_transactions.update_one({"id": txn_id}, {"$set": update})
+
+    await db.generations.update_one(
+        {"id": txn["generation_id"]},
+        {"$set": {"paid": True,
+                  "paid_at": datetime.now(timezone.utc).isoformat(),
+                  "payment_txn_id": txn_id}},
+    )
+    await _send_payment_email(txn["generation_id"], txn.get("user_email"))
+    logger.info("PayPal IPN OK : livrable %s déverrouillé", txn["generation_id"])
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

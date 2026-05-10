@@ -59,13 +59,19 @@ sudo bash deploy/install.sh   # idempotent : conserve la config existante si vou
 - `JWT_SECRET` régénéré aléatoirement à chaque installation.
 - Mot de passe admin choisi par l'utilisateur, jamais loggé en clair.
 - Stripe : passez en `sk_live_…` une fois en production réelle.
+- PayPal : utiliser un compte business si possible (limites plus élevées) ; activer l'IPN dans le profil PayPal (URL : `https://vita-form.vitae-publica.tech/api/webhook/paypal`).
 - Resend : vérifiez votre domaine d'envoi (DNS SPF/DKIM/DMARC).
 
-## 📜 Manuel — Configuration Stripe Webhook (à faire après installation)
-Dashboard Stripe → Developers → Webhooks → Add endpoint :
-- **URL** : `https://vita-form.vitae-publica.tech/api/webhook/stripe`
-- **Events** : `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`
-- Copier le signing secret et l'ajouter à `.env.production` : `STRIPE_WEBHOOK_SECRET=whsec_…`
+## 📜 Manuel — Configuration PayPal IPN (à faire après installation)
+Le webhook est automatique : VITA-FORM passe le `notify_url` à chaque
+transaction, mais PayPal expose aussi un panneau IPN global :
+**Compte PayPal → Profil → Notifications de paiement instantané (IPN)** :
+- **URL** : `https://vita-form.vitae-publica.tech/api/webhook/paypal`
+- **Statut** : Activé (Receive IPN messages)
+
+Le compte marchand par défaut est `ely.mustapha@yahoo.ca` (Merchant ID
+`XGYL8NPMKHDUY`). Modifiable via les variables `PAYPAL_BUSINESS_EMAIL` et
+`PAYPAL_MERCHANT_ID` dans `.env.production`.
 
 ## 🧰 Commandes utiles
 ```bash

@@ -3,30 +3,30 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { CheckCircle2, AlertTriangle, Hourglass, ArrowRight } from "lucide-react";
 
-const POLL_INTERVAL_MS = 2000;
-const MAX_ATTEMPTS = 8;
+const POLL_INTERVAL_MS = 2500;
+const MAX_ATTEMPTS = 16;
 
 export default function PaymentSuccess() {
   const [params] = useSearchParams();
-  const sessionId = params.get("session_id");
-  const [status, setStatus] = useState("polling"); // polling | paid | expired | error
+  const txnId = params.get("txn_id") || params.get("session_id");
+  const [status, setStatus] = useState("polling");
   const [generationId, setGenerationId] = useState(null);
   const attemptsRef = useRef(0);
   const nav = useNavigate();
 
   useEffect(() => {
-    if (!sessionId) { setStatus("error"); return; }
+    if (!txnId) { setStatus("error"); return; }
     let cancelled = false;
 
     const poll = async () => {
       if (cancelled) return;
       attemptsRef.current += 1;
       try {
-        const { data } = await api.get(`/payments/checkout/status/${sessionId}`);
+        const { data } = await api.get(`/payments/checkout/status/${txnId}`);
         setGenerationId(data.generation_id);
         if (data.payment_status === "paid") { setStatus("paid"); return; }
-        if (data.status === "expired") { setStatus("expired"); return; }
-      } catch (e) {
+        if (data.status === "rejected") { setStatus("expired"); return; }
+      } catch {
         if (attemptsRef.current >= MAX_ATTEMPTS) { setStatus("error"); return; }
       }
       if (attemptsRef.current >= MAX_ATTEMPTS) { setStatus("error"); return; }
@@ -34,7 +34,7 @@ export default function PaymentSuccess() {
     };
     poll();
     return () => { cancelled = true; };
-  }, [sessionId]);
+  }, [txnId]);
 
   return (
     <div className="max-w-2xl mx-auto px-6 md:px-12 py-24">
@@ -44,7 +44,7 @@ export default function PaymentSuccess() {
             <Hourglass className="w-12 h-12 text-[#D4AF37] vf-spin mx-auto" />
             <h1 className="vf-serif text-3xl mt-6 text-slate-50">Vérification du paiement…</h1>
             <p className="text-slate-400 mt-3">
-              Stripe nous renvoie le statut de votre transaction. Quelques secondes seulement.
+              PayPal nous transmet le statut de votre transaction. Quelques secondes seulement.
             </p>
           </>
         )}

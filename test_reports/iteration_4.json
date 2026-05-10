@@ -1,0 +1,34 @@
+{
+  "summary": "VITA-FORM iteration 6 PayPal flow validation. 16/16 backend pytest tests PASS against the public preview URL covering: healthcheck, admin login, /api/payments/options (7 currencies + prices + merchant_email='ely.mustapha@yahoo.ca' + default_currency='EUR'), /api/payments/checkout EUR (amount=14.90, URL starts with https://www.paypal.com/cgi-bin/webscr?cmd=_xclick, contains business=ely.mustapha%40yahoo.ca, merchant_id=XGYL8NPMKHDUY, currency_code=EUR, amount=14.90, custom=<txn_id>, notify_url with /api/webhook/paypal), USD pricing=16.00, invalid currency XAF→400, unknown gen_id→404, status endpoint (returns initiated/pending) + 404 unknown, IPN webhook empty→{empty}, no-custom→{ignored}, fake unknown txn→{invalid}, removed Stripe webhook→404, removed mock-checkout→404, smoke counts (institutions ≥22, jurisprudences ≥22). Frontend smoke: login flow OK, /preview/{gen_id} renders paywall dialog with all 7 currency tiles (EUR/USD/GBP/CAD/CHF/AUD/JPY), amount updates correctly when switching currency (14.90 EUR → 16.00 USD → 2400 JPY), paywall-confirm computed bgcolor = rgb(0,112,186) = #0070BA PayPal blue, clicking confirm issues POST /api/payments/checkout with correct body and triggers redirect to https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=ely.mustapha%40yahoo.ca&...",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Generator (cosmetic, pre-existing)", "issues": ["React hydration warning: <span> child inside <option> caused by Emergent preview's x-ve-dynamic injection. Cosmetic only; already noted in iteration_3 report."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_paypal_flow.py",
+    "/app/test_reports/pytest/iteration_4_paypal.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~937 lines with PayPal routes added — splitting into routers (auth, payments, generations, sources, jurisprudences, admin) is increasingly warranted for maintainability.",
+    "paypal_service.is_payment_acceptable correctly checks payment_status=Completed, receiver_email match (anti-spoof), mc_currency match, and mc_gross >= expected (0.01 tolerance). Solid.",
+    "verify_ipn re-POSTs raw body to PayPal with cmd=_notify-validate — correct per PayPal spec.",
+    "build_checkout_url formats JPY as integer (no decimals) — correct (PayPal does not allow JPY decimals). Other currencies use 2 decimals.",
+    "PUBLIC_APP_URL is used for notify_url (so PayPal can reach the IPN endpoint over the internet). Falls back to origin_url if missing — acceptable.",
+    "Webhook is idempotent: checks payment_status=='paid' before re-processing. Good.",
+    "Webhook only flips paid=true on (1) PayPal-VERIFIED + (2) receiver_email match + (3) currency match + (4) amount >= expected. Strong defense against spoofing.",
+    "Note: requests library is sync; verify_ipn is correctly wrapped in asyncio.to_thread to avoid blocking the event loop."
+  ],
+  "updated_files": ["/app/backend/tests/test_paypal_flow.py"],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% smoke"},
+  "test_credentials": "admin@vita-form.com / VitaForm2026!Admin (seeded). Created and cleaned up a non-VIP test user test_paywall_*@vita-form.com / TestPaywall2026! to test the paywall (admin is VIP so the paywall doesn't render).",
+  "seed_data_creation": "Inserted one TEST_PAYWALL_<uuid> generation owned by a temporary non-VIP user to drive the UI paywall flow. All test rows (generation, payment_transactions, user) were deleted at end of run. Backend pytest fixture also creates and tears down a TEST_GEN_* generation owned by admin and its payment_transactions.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Public preview URL: https://formation-finances.preview.emergentagent.com. Admin is VIP=true (created in bootstrap), so /preview/{gen_id} is auto-unlocked for admin → no paywall button. To exercise the paywall UI, register a new user via POST /api/auth/register, then insert a generation in MongoDB owned by that user_id with paid=false. Frontend stores JWT in localStorage key 'vf_token' (NOT 'vitaform_token'). Login form is at /auth (not /login), opened via 'Connexion' button. Frontend already correctly issues POST /api/payments/checkout and redirects window.location to the PayPal URL. The IPN webhook test for unknown txn returns status='invalid' (PayPal verify rejects fake payload) — that is expected behavior, not a bug.",
+  "rca of the issue": "No bugs found. PayPal _xclick flow is fully wired: backend builds the correct hosted-button URL (with merchant_id, business email, currency, amount, custom=txn_id, notify_url), persists a payment_transactions row, and the webhook performs anti-spoof validation before flipping paid=true. Stripe code is fully removed (webhook returns 404)."
+}

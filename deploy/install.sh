@@ -230,13 +230,16 @@ configure_env() {
     ask_secret "EMERGENT_LLM_KEY (sk-emergent-...)" EMERGENT_LLM_KEY
 
     echo
-    info "${C_BOLD}Stripe${C_RESET} — Dashboard Stripe → Developers → API keys"
-    if ask_yesno "Utiliser une clé Stripe LIVE de production ?" n; then
-        ask_secret "STRIPE_API_KEY (sk_live_...)" STRIPE_API_KEY
+    info "${C_BOLD}PayPal${C_RESET} — compte personnel ou business standard"
+    info "Aucune clé API requise : seul l'email du marchand suffit."
+    ask "PAYPAL_BUSINESS_EMAIL (compte recevant les paiements)" "ely.mustapha@yahoo.ca" PAYPAL_BUSINESS_EMAIL
+    ask "PAYPAL_MERCHANT_ID (depuis votre profil PayPal)" "XGYL8NPMKHDUY" PAYPAL_MERCHANT_ID
+    if ask_yesno "Utiliser le bac à sable PayPal Sandbox (pour tests) ?" n; then
+        PAYPAL_ENV="sandbox"
     else
-        ask "STRIPE_API_KEY (test ou sk_test_emergent)" "sk_test_emergent" STRIPE_API_KEY
+        PAYPAL_ENV="live"
     fi
-    ask "Prix paywall en EUR" "14.90" PAYWALL_PRICE_EUR
+    ask "Prix paywall en EUR (sera converti pour les autres devises)" "14.90" PAYWALL_PRICE_EUR
 
     echo
     info "${C_BOLD}Resend${C_RESET} (https://resend.com → API Keys)"
