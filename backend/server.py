@@ -34,6 +34,7 @@ from emergentintegrations.payments.stripe.checkout import (
 import stripe as stripe_sdk
 
 from seeds import INSTITUTIONS_SEED, CYCLES, DURATIONS, DAILY_SALARIES
+from jurisprudence_seed import JURISPRUDENCES_SEED
 from vitalist_corpus import (
     VITALIST_SYSTEM_PROMPT,
     build_course_prompt,
@@ -213,6 +214,16 @@ async def bootstrap():
         )
     except Exception as exc:
         logger.warning("Jurisprudence text index: %s", exc)
+
+    # Seed jurisprudence corpus once
+    if await db.jurisprudences.count_documents({}) == 0:
+        for j in JURISPRUDENCES_SEED:
+            await db.jurisprudences.insert_one({
+                "id": str(uuid.uuid4()),
+                **j,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        logger.info("Seeded %d jurisprudences", len(JURISPRUDENCES_SEED))
 
     # Ensure default admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@vita-form.com")
